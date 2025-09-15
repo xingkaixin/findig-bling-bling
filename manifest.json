@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "融美美 (findig-bling-bling)",
+  "version": "1.0.0",
+  "description": "监听findig-web作业日志扩展数据，可视化KTR数据处理链路",
+  "permissions": [
+    "webRequest"
+  ],
+  "host_permissions": [
+    "http://192.168.1.88:8088/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["http://192.168.1.88:8088/findig-web/*"],
+      "js": ["working-drawer.js"],
+      "run_at": "document_end",
+      "all_frames": true
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "融美美 - KTR数据监听"
+  }
+}

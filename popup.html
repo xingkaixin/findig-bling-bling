@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>融美美 - findig-bling-bling</title>
+  <style>
+    body {
+      width: 300px;
+      padding: 20px;
+      font-family: Arial, sans-serif;
+      font-size: 14px;
+    }
+    .header {
+      text-align: center;
+      margin-bottom: 15px;
+      padding-bottom: 10px;
+      border-bottom: 2px solid #409EFF;
+    }
+    .header h1 {
+      margin: 0;
+      font-size: 18px;
+      color: #303133;
+    }
+    .header .subtitle {
+      font-size: 12px;
+      color: #909399;
+      margin-top: 5px;
+    }
+    .status {
+      background-color: #f0f9ff;
+      border: 1px solid #b3d8ff;
+      border-radius: 4px;
+      padding: 10px;
+      margin-bottom: 15px;
+    }
+    .status-title {
+      font-weight: bold;
+      color: #409EFF;
+      margin-bottom: 5px;
+    }
+    .status-item {
+      font-size: 12px;
+      color: #606266;
+      margin: 3px 0;
+    }
+    .instructions {
+      background-color: #f4f4f5;
+      border-radius: 4px;
+      padding: 10px;
+      font-size: 12px;
+      color: #606266;
+      line-height: 1.5;
+    }
+    .instructions h3 {
+      margin: 0 0 8px 0;
+      font-size: 14px;
+      color: #303133;
+    }
+    .instructions ol {
+      margin: 0;
+      padding-left: 20px;
+    }
+    .instructions li {
+      margin-bottom: 5px;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>融美美</h1>
+    <div class="subtitle">findig-bling-bling</div>
+  </div>
+
+  <div class="status">
+    <div class="status-title">扩展状态</div>
+    <div class="status-item">✅ 已激活</div>
+    <div class="status-item">🎯 目标页面: 作业运行日志</div>
+    <div class="status-item">👂 监听中: /logExtData 请求</div>
+  </div>
+
+  <div class="instructions">
+    <h3>使用说明</h3>
+    <ol>
+      <li>访问作业运行日志页面</li>
+      <li>点击扩展列的"详情"按钮</li>
+      <li>打开浏览器控制台查看输出</li>
+      <li>所有/logExtData请求和响应都会被捕获</li>
+    </ol>
+  </div>
+
+  <script>
+    // 简单的状态检查
+    chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
+      const currentTab = tabs[0];
+      if (currentTab.url.includes('192.168.1.88:8088/findig-web/#/logTracing/jobLog')) {
+        document.querySelector('.status-item').textContent = '✅ 已在目标页面';
+      } else {
+        document.querySelector('.status-item').textContent = '⚠️ 请在目标页面使用';
+      }
+    });
+  </script>
+</body>
+</html>
