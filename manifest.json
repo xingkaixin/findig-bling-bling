@@ -12,7 +12,7 @@
   "content_scripts": [
     {
       "matches": ["http://192.168.1.88:8088/findig-web/*"],
-      "js": ["working-drawer.js"],
+      "js": ["ktr-visualizer.js", "working-drawer.js"],
       "run_at": "document_end",
       "all_frames": true
     }

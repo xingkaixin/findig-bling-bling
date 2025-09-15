@@ -11,20 +11,30 @@
     try {
       const data = typeof jsonData === 'string' ? JSON.parse(jsonData) : jsonData;
 
-      if (!data.result || !data.result[0]) {
-        console.log('KTR数据格式不正确');
-        return null;
+      // 检查是否为直接KTR数据结构（包含steps和rs）
+      if (data.steps && data.rs) {
+        return {
+          extData: data,
+          extSummary: data, // 对于直接格式，使用相同的数据
+          raw: data
+        };
       }
 
-      const result = data.result[0];
-      const extData = typeof result.ext_data === 'string' ? JSON.parse(result.ext_data) : result.ext_data;
-      const extSummary = typeof result.ext_summary === 'string' ? JSON.parse(result.ext_summary) : result.ext_summary;
+      // 检查是否为API响应格式（包含result数组）
+      if (data.result && data.result[0]) {
+        const result = data.result[0];
+        const extData = typeof result.ext_data === 'string' ? JSON.parse(result.ext_data) : result.ext_data;
+        const extSummary = typeof result.ext_summary === 'string' ? JSON.parse(result.ext_summary) : result.ext_summary;
 
-      return {
-        extData: extData,
-        extSummary: extSummary,
-        raw: data
-      };
+        return {
+          extData: extData,
+          extSummary: extSummary,
+          raw: data
+        };
+      }
+
+      console.log('KTR数据格式不正确，无法识别格式');
+      return null;
     } catch (error) {
       console.log('KTR数据解析失败:', error);
       return null;
@@ -256,8 +266,8 @@
           position: fixed;
           top: 50px;
           right: 20px;
-          width: 400px;
-          max-height: 80vh;
+          width: 800px;
+          max-height: 85vh;
           background: white;
           border: 1px solid #dcdfe6;
           border-radius: 8px;
@@ -302,9 +312,9 @@
         }
 
         .ktr-viz-content {
-          padding: 16px;
+          padding: 20px;
           overflow-y: auto;
-          max-height: calc(80vh - 60px);
+          max-height: calc(85vh - 70px);
         }
 
         .ktr-viz-flow {
@@ -588,71 +598,217 @@
 
   // 从JSON编辑器中查找原始数据
   function findRawJSONData(jsonEditor) {
-    // 尝试从各种可能的位置获取JSON数据
-    const possibleSources = [
-      () => window.lastKTRResponse, // 如果有全局变量
-      () => {
-        // 从DOM中提取文本并尝试解析
-        const textContent = jsonEditor.textContent;
-        const jsonMatch = textContent.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          try {
-            return JSON.parse(jsonMatch[0]);
-          } catch (e) {
-            return null;
-          }
-        }
-        return null;
-      },
-      () => {
-        // 查找特定的数据属性
-        const dataElements = jsonEditor.querySelectorAll('[title*="statusCode"], [title*="result"]');
-        if (dataElements.length > 0) {
-          // 尝试重构JSON结构
-          return reconstructJSONFromElements(jsonEditor);
-        }
-        return null;
+    // 首先尝试从预览模式的pre元素中获取JSON
+    const previewElement = jsonEditor.querySelector('.jsoneditor-preview');
+    if (previewElement && previewElement.textContent) {
+      try {
+        return JSON.parse(previewElement.textContent.trim());
+      } catch (e) {
+        console.log('预览模式内容解析失败:', e);
       }
-    ];
+    }
 
-    for (const source of possibleSources) {
-      const data = source();
-      if (data) return data;
+    // 尝试从ace编辑器的内容中获取JSON
+    const aceTextarea = jsonEditor.querySelector('.ace_text-input');
+    if (aceTextarea && aceTextarea.value) {
+      try {
+        return JSON.parse(aceTextarea.value);
+      } catch (e) {
+        console.log('ACE编辑器内容解析失败:', e);
+      }
+    }
+
+    // 尝试从DOM文本内容中提取JSON
+    const textContent = jsonEditor.textContent;
+    const jsonMatch = textContent.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      try {
+        return JSON.parse(jsonMatch[0]);
+      } catch (e) {
+        console.log('文本内容解析失败:', e);
+      }
+    }
+
+    // 尝试从可能的全局变量中获取
+    if (window.lastKTRResponse) {
+      return window.lastKTRResponse;
     }
 
     return null;
   }
 
-  // 从元素重构JSON
-  function reconstructJSONFromElements(jsonEditor) {
-    // 这是一个简化的重构方法
-    // 实际实现中需要根据具体的DOM结构来重构
-    try {
-      const result = {
-        statusCode: "200",
-        msg: "",
-        result: [{
-          ext_data: "",
-          ext_summary: ""
-        }],
-        total: 0,
-        page: 0,
-        size: 0
-      };
-
-      // 这里需要根据实际的DOM结构来提取数据
-      // 暂时返回一个示例结构
-      return result;
-    } catch (error) {
-      console.log('重构JSON失败:', error);
-      return null;
+  // 手动触发渲染的函数
+  function manualRenderKTR() {
+    const drawer = document.querySelector('.el-drawer');
+    if (!drawer) {
+      console.log('未找到抽屉组件');
+      alert('请先打开侧边栏并点击预览');
+      return;
     }
+
+    const jsonEditor = drawer.querySelector('.jsoneditor');
+    if (!jsonEditor) {
+      console.log('抽屉中未找到JSON编辑器');
+      alert('请在抽屉中查看JSON内容');
+      return;
+    }
+
+    const jsonData = findRawJSONData(jsonEditor);
+    if (!jsonData) {
+      console.log('无法提取JSON数据');
+      alert('无法提取JSON数据，请确保已点击预览并显示JSON内容');
+      return;
+    }
+
+    console.log('手动提取的KTR数据:', jsonData);
+    const parsedData = parseKTRData(jsonData);
+    if (parsedData) {
+      showVisualization(parsedData);
+    } else {
+      alert('KTR数据解析失败，请检查数据格式');
+    }
+  }
+
+  // 动态管理渲染按钮的显示/隐藏
+  function manageRenderButton() {
+    // 直接查找包含JSON编辑器的可见元素
+    const jsonEditors = document.querySelectorAll('.jsoneditor');
+    let targetDrawer = null;
+
+    // 找到第一个可见的JSON编辑器，然后找到其所在的抽屉
+    for (const editor of jsonEditors) {
+      const rect = editor.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        // 向上查找抽屉容器
+        targetDrawer = editor.closest('.el-drawer__container, .el-drawer, [role="dialog"]');
+        if (targetDrawer) break;
+      }
+    }
+
+    const existingBtn = document.getElementById('ktr-render-btn');
+
+    // 如果找到目标抽屉，显示按钮
+    if (targetDrawer) {
+      if (!existingBtn) {
+        addRenderButtonToDrawer(targetDrawer);
+      } else {
+        // 确保按钮位置正确
+        positionButtonNearDrawer(targetDrawer, existingBtn);
+      }
+    } else if (existingBtn) {
+      // 没有目标抽屉，移除按钮
+      existingBtn.remove();
+    }
+  }
+
+  // 添加渲染按钮到抽屉附近
+  function addRenderButtonToDrawer(drawer) {
+    const renderBtn = document.createElement('button');
+    renderBtn.id = 'ktr-render-btn';
+    renderBtn.innerHTML = '🚀 渲染数据链路图';
+
+    renderBtn.style.cssText = `
+      position: fixed;
+      z-index: 10000;
+      background: #409eff;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      padding: 10px 16px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+      transition: all 0.3s;
+      display: block;
+      visibility: visible;
+    `;
+
+    renderBtn.onmouseover = function() {
+      this.style.background = '#66b1ff';
+      this.style.transform = 'translateY(-2px)';
+    };
+
+    renderBtn.onmouseout = function() {
+      this.style.background = '#409eff';
+      this.style.transform = 'translateY(0)';
+    };
+
+    renderBtn.onclick = manualRenderKTR;
+
+    document.body.appendChild(renderBtn);
+    positionButtonNearDrawer(drawer, renderBtn);
+  }
+
+  // 定位按钮到抽屉附近
+  function positionButtonNearDrawer(drawer, button) {
+    const drawerRect = drawer.getBoundingClientRect();
+
+    // 如果抽屉位置是(0,0)但有尺寸，说明使用了transform
+    // 将按钮放在页面右侧，靠近抽屉可能出现的位置
+    if (drawerRect.left === 0 && drawerRect.top === 0 && drawerRect.width > 0) {
+      // 假设抽屉从右侧滑入，将按钮放在页面右侧
+      const viewportWidth = window.innerWidth;
+      button.style.top = '100px';
+      button.style.left = (viewportWidth - drawerRect.width - 200) + 'px';
+    } else {
+      // 正常情况：将按钮放在抽屉左上角外侧
+      button.style.top = (drawerRect.top + 20) + 'px';
+      button.style.left = (drawerRect.left - 180) + 'px';
+    }
+
+    button.style.display = 'block';
+    button.style.visibility = 'visible';
+  }
+
+  // 监听抽屉状态变化
+  function monitorDrawerState() {
+    const observer = new MutationObserver(function(mutations) {
+      mutations.forEach(function(mutation) {
+        // 检查类名变化或属性变化
+        if (mutation.type === 'attributes' &&
+            (mutation.attributeName === 'class' || mutation.attributeName === 'style')) {
+          manageRenderButton();
+        }
+
+        // 检查添加/移除的节点
+        mutation.addedNodes.forEach(function(node) {
+          if (node.nodeType === 1 && node.classList) {
+            if (node.classList.contains('el-drawer') ||
+                node.classList.contains('el-drawer__container') ||
+                node.classList.contains('jsoneditor')) {
+              manageRenderButton();
+            }
+          }
+        });
+
+        mutation.removedNodes.forEach(function(node) {
+          if (node.nodeType === 1 && node.classList &&
+              (node.classList.contains('el-drawer') || node.classList.contains('el-drawer__container'))) {
+            manageRenderButton();
+          }
+        });
+      });
+    });
+
+    // 监听body的变化
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['class', 'style']
+    });
+
+    // 初始检查和定期检查
+    setTimeout(manageRenderButton, 100);
+    setInterval(manageRenderButton, 1000); // 每秒检查一次
   }
 
   // 初始化
   function init() {
     console.log('KTR可视化器初始化');
     monitorDrawerForKTR();
+    monitorDrawerState();
 
     // 监听来自content script的消息
     window.addEventListener('message', function(event) {
