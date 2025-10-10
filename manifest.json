@@ -4,14 +4,17 @@
   "version": "1.0.0",
   "description": "监听findig-web作业日志扩展数据，可视化KTR数据处理链路",
   "permissions": [
-    "webRequest"
+    "webRequest",
+    "activeTab",
+    "storage"
   ],
   "host_permissions": [
-    "http://192.168.1.88:8088/*"
+    "http://*/*",
+    "https://*/*"
   ],
   "content_scripts": [
     {
-      "matches": ["http://192.168.1.88:8088/findig-web/*"],
+      "matches": ["*://*/*"],
       "js": ["ktr-visualizer.js", "working-drawer.js"],
       "run_at": "document_end",
       "all_frames": true

@@ -117,14 +117,7 @@
     return 'running';
   }
 
-  // 转换exit码为状态
-  function getStatusFromExit(exit) {
-    if (exit === 0) return 'success';
-    if (exit === 1) return 'warning';
-    if (exit === 2) return 'running';
-    return 'error';
-  }
-
+  
   // 创建可视化面板
   function createVisualizationPanel(ktrData) {
     if (!ktrData) return;
@@ -285,8 +278,6 @@
 
       const maxDuration = Math.max(...stepsWithRealDuration.map(s => s.realDuration), 1);
 
-      // 性能优化：使用DocumentFragment减少DOM操作
-      const fragment = document.createElement('template');
       let stepsHtml = '';
 
       stepsWithRealDuration.forEach((step, index) => {
@@ -1092,10 +1083,53 @@
     }
   }
 
-  // 监听抽屉组件中的JSON数据
-  function monitorDrawerForKTR() {
-    console.log('开始监听KTR数据...');
+  // 检查当前网站是否已启用且符合功能范围
+  function isWebsiteEnabled() {
+    // 首先检查路径是否包含findig-web
+    if (!window.location.pathname.includes('findig-web')) {
+      console.log('当前网站路径不符合插件功能范围（不包含findig-web）');
+      return false;
+    }
 
+    // 检查是否在扩展环境中
+    if (typeof chrome === 'undefined' || !chrome.storage) {
+      console.log('不在扩展环境中，跳过网站检查');
+      return true; // 开发模式时启用
+    }
+
+    try {
+      chrome.storage.local.get(['ktr-enabled-websites'], (result) => {
+        const enabledWebsites = result['ktr-enabled-websites'] || [];
+        const currentHost = window.location.host;
+        const currentOrigin = window.location.origin;
+
+        const isEnabled = enabledWebsites.some(website => {
+          try {
+            const url = new URL(website);
+            return url.host === currentHost || website === currentOrigin;
+          } catch (error) {
+            return website === currentOrigin;
+          }
+        });
+
+        // 如果启用，开始监听KTR数据
+        if (isEnabled) {
+          console.log('当前网站已启用，开始监听KTR数据...');
+          startMonitoring();
+        } else {
+          console.log('当前网站未启用');
+        }
+      });
+    } catch (error) {
+      console.log('无法访问存储，启用监听:', error);
+      startMonitoring(); // 出错时默认启用
+    }
+
+    return false; // 异步检查，返回false让调用者不继续执行
+  }
+
+  // 开始监听KTR数据
+  function startMonitoring() {
     // 监听抽屉出现
     const observer = new MutationObserver(function(mutations) {
       mutations.forEach(function(mutation) {
@@ -1114,6 +1148,12 @@
       childList: true,
       subtree: true
     });
+  }
+
+  // 监听抽屉组件中的JSON数据
+  function monitorDrawerForKTR() {
+    console.log('检查网站启用状态...');
+    isWebsiteEnabled();
   }
 
   // 从抽屉中提取KTR数据
