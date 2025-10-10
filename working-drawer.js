@@ -277,7 +277,7 @@
   // 解析KTR数据（基于实际格式）
   function parseKTRData(jsonStr) {
     try {
-      const data = JSON.parse(jsonStr);
+      const data = typeof jsonStr === 'string' ? JSON.parse(jsonStr) : jsonStr;
 
       // 实际数据格式直接包含rs和steps
       if (data.rs && data.steps) {
@@ -318,14 +318,20 @@
     try {
       const jsonEditor = drawer.querySelector('.jsoneditor');
       if (!jsonEditor) {
-        console.log('未找到JSON编辑器');
+        console.log('未找到JSON编辑器，尝试使用捕获的KTR数据');
+        if (window.lastKTRResponse) {
+          return parseKTRData(window.lastKTRResponse);
+        }
         return null;
       }
 
       // 获取pre元素中的JSON文本
       const preElement = jsonEditor.querySelector('pre.jsoneditor-preview');
       if (!preElement) {
-        console.log('未找到pre元素');
+        console.log('未找到pre元素，尝试使用捕获的KTR数据');
+        if (window.lastKTRResponse) {
+          return parseKTRData(window.lastKTRResponse);
+        }
         return null;
       }
 
@@ -393,6 +399,34 @@
     return '❌ 失败';
   }
 
+  function getOverallSummaryStatus(summary) {
+    if (!summary) {
+      return { className: 'running', label: '状态未知' };
+    }
+
+    if ((summary.errors || 0) > 0) {
+      return { className: 'error', label: '❌ 失败' };
+    }
+
+    if (summary.exit === 0 || (summary.finish === true && summary.stop === false)) {
+      return { className: 'success', label: '✅ 已完成' };
+    }
+
+    if (summary.exit === 2) {
+      return { className: 'running', label: '🔄 运行中' };
+    }
+
+    if (summary.stop) {
+      return { className: 'running', label: '⏹️ 已停止' };
+    }
+
+    if (summary.exit === 1) {
+      return { className: 'error', label: '❌ 失败' };
+    }
+
+    return { className: 'running', label: '🔄 运行中' };
+  }
+
   // 创建流程图HTML
   function createFlowVisualization(ktrData) {
     if (!ktrData || !ktrData.extData) {
@@ -405,9 +439,13 @@
     // 运行概览
     if (extSummary.rs && extSummary.rs.length > 0) {
       const summary = extSummary.rs[0];
-      const overallStatus = summary.exit === 0 ? 'success' : summary.exit === 2 ? 'running' : 'error';
+      const overallStatus = getOverallSummaryStatus(summary);
       const metrics = summary.metrics || '';
       const events = summary.events || {};
+      const globalPull = extSummary.pull || {};
+      const globalPush = extSummary.push || {};
+      const runTimes = typeof extSummary.times === 'number' ? extSummary.times : null;
+      const aggregatedCounter = summary.events?.counter || {};
 
       html += `
         <div class="ktr-overview">
@@ -422,7 +460,7 @@
           </div>
           <div class="ktr-overview-item">
             <span class="ktr-overview-label">状态:</span>
-            <span class="ktr-overview-value ${overallStatus}">${overallStatus === 'success' ? '✅ 已完成' : overallStatus === 'running' ? '🔄 运行中' : '❌ 失败'}</span>
+            <span class="ktr-overview-value ${overallStatus.className}">${overallStatus.label}</span>
           </div>
           <div class="ktr-overview-item">
             <span class="ktr-overview-label">耗时:</span>
@@ -439,6 +477,38 @@
           ${events.pull ? `<div class="ktr-overview-item">
             <span class="ktr-overview-label">拉取耗时:</span>
             <span class="ktr-overview-value">${events.pull.takeTime || 0}ms</span>
+          </div>` : ''}
+          ${events.pull ? `<div class="ktr-overview-item">
+            <span class="ktr-overview-label">拉取发起时间:</span>
+            <span class="ktr-overview-value">${events.pull.reqTime || 'N/A'}</span>
+          </div>` : ''}
+          ${events.push ? `<div class="ktr-overview-item">
+            <span class="ktr-overview-label">推送时间:</span>
+            <span class="ktr-overview-value">${events.push.reqTime || 'N/A'}</span>
+          </div>` : ''}
+          ${events.push ? `<div class="ktr-overview-item">
+            <span class="ktr-overview-label">推送耗时:</span>
+            <span class="ktr-overview-value">${events.push.takeTime || 0}ms</span>
+          </div>` : ''}
+          ${aggregatedCounter.size ? `<div class="ktr-overview-item">
+            <span class="ktr-overview-label">记录统计:</span>
+            <span class="ktr-overview-value">${aggregatedCounter.size || 0} / ${aggregatedCounter.key || 0}</span>
+          </div>` : ''}
+          ${aggregatedCounter.op ? `<div class="ktr-overview-item">
+            <span class="ktr-overview-label">操作统计:</span>
+            <span class="ktr-overview-value">${aggregatedCounter.op}</span>
+          </div>` : ''}
+          ${runTimes !== null ? `<div class="ktr-overview-item">
+            <span class="ktr-overview-label">运行次数:</span>
+            <span class="ktr-overview-value">${runTimes}</span>
+          </div>` : ''}
+          ${globalPull.takeTime ? `<div class="ktr-overview-item">
+            <span class="ktr-overview-label">总体拉取耗时:</span>
+            <span class="ktr-overview-value">${globalPull.takeTime}ms (${globalPull.times || 0}次)</span>
+          </div>` : ''}
+          ${globalPush.takeTime ? `<div class="ktr-overview-item">
+            <span class="ktr-overview-label">总体推送耗时:</span>
+            <span class="ktr-overview-value">${globalPush.takeTime}ms (${globalPush.times || 0}次)</span>
           </div>` : ''}
         </div>
       `;

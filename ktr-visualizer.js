@@ -13,15 +13,32 @@
 
       // 检查是否为直接KTR数据结构（包含steps和rs）
       if (data.steps && data.rs) {
-        return normalizeKTRData(data);
+        return normalizeKTRData({
+          steps: data.steps,
+          detailedRuns: data.rs,
+          summaryRuns: data.summary?.rs || data.rs,
+          summaryMeta: data.summary || {},
+          times: data.times,
+          pull: data.pull,
+          push: data.push
+        });
       }
 
       // 检查是否为API响应格式（包含result数组）
       if (data.result && data.result[0]) {
         const result = data.result[0];
-        const extData = typeof result.ext_data === 'string' ? JSON.parse(result.ext_data) : result.ext_data;
+        const extData = typeof result.ext_data === 'string' ? JSON.parse(result.ext_data) : (result.ext_data || {});
+        const extSummary = typeof result.ext_summary === 'string' ? JSON.parse(result.ext_summary) : (result.ext_summary || {});
 
-        return normalizeKTRData({steps: extData.steps, rs: extData.rs, ...extData});
+        return normalizeKTRData({
+          steps: extData.steps || [],
+          detailedRuns: extData.rs || [],
+          summaryRuns: extSummary.rs || [],
+          summaryMeta: extSummary,
+          times: extSummary.times,
+          pull: extSummary.pull,
+          push: extSummary.push
+        });
       }
 
       console.log('KTR数据格式不正确，无法识别格式');
@@ -32,33 +49,92 @@
     }
   }
 
+  function processIncomingKTRData(rawData, contextInfo) {
+    try {
+      const parsedData = parseKTRData(rawData);
+      if (parsedData) {
+        window.lastKTRResponse = rawData;
+        if (contextInfo) {
+          console.log('解析KTR数据来源:', contextInfo);
+        }
+        showVisualization(parsedData);
+      }
+    } catch (error) {
+      console.log('处理KTR数据失败:', error);
+    }
+  }
+
+  function injectNetworkInterceptor() {
+    if (document.getElementById('ktr-network-interceptor')) {
+      return;
+    }
+
+    if (typeof chrome === 'undefined' || !chrome.runtime?.getURL) {
+      console.log('无法注入网络拦截器：缺少runtime上下文');
+      return;
+    }
+
+    const interceptorScript = document.createElement('script');
+    interceptorScript.id = 'ktr-network-interceptor';
+    interceptorScript.type = 'text/javascript';
+    interceptorScript.src = chrome.runtime.getURL('ktr-interceptor.js');
+    interceptorScript.onload = () => {
+      interceptorScript.remove();
+    };
+
+    document.documentElement.appendChild(interceptorScript);
+  }
+
   // 统一数据结构，消除steps和statuses的分离
   function normalizeKTRData(data) {
-    const runs = data.rs.map((run, runIndex) => {
+    const stepDefinitions = data.steps || [];
+    const detailRuns = data.detailedRuns || data.rs || [];
+    const summaryRuns = data.summaryRuns || [];
+    const maxRuns = Math.max(detailRuns.length, summaryRuns.length);
+    const summaryMeta = data.summaryMeta || {};
+
+    const runs = Array.from({ length: maxRuns }, (_, runIndex) => {
+      const detail = detailRuns[runIndex] || {};
+      const summary = summaryRuns[runIndex] || {};
+      const mergedStatuses = detail.statuses || summary.statuses || [];
+      const mergedRun = {
+        ...summary,
+        ...detail,
+        batch: summary.batch || detail.batch,
+        startAt: summary.startAt || detail.startAt,
+        takeTime: summary.takeTime ?? detail.takeTime,
+        slowStep: summary.slowStep || detail.slowStep,
+        metrics: summary.metrics ?? detail.metrics,
+        events: summary.events || detail.events,
+        errors: summary.errors ?? detail.errors ?? 0,
+        finish: summary.finish ?? detail.finish,
+        stop: summary.stop ?? detail.stop,
+        exit: detail.exit ?? summary.exit,
+        statuses: mergedStatuses
+      };
+
       const steps = [];
 
-      // 过滤虚拟步骤并合并执行状态
-      if (data.steps && data.steps.length > 0) {
-        const virtualSteps = ['eventFlow', 'Dummy']; // 虚拟步骤列表
-        const realSteps = data.steps.filter(step =>
+      if (stepDefinitions.length > 0) {
+        const virtualSteps = ['eventFlow', 'Dummy'];
+        const realSteps = stepDefinitions.filter(step =>
           !virtualSteps.some(virtual => step.name.includes(virtual))
         );
 
         realSteps.forEach((stepDef, stepIndex) => {
-          const status = run.statuses?.find(s => s.step && s.step.includes(stepDef.name));
+          const status = mergedRun.statuses?.find(s => s.step && s.step.includes(stepDef.name));
 
-          // 解析错误数量：从 nr 字符串中提取 E=数字
           let errorCount = 0;
           if (status?.nr) {
             const errorMatch = status.nr.match(/E=(\d+)/);
             errorCount = errorMatch ? parseInt(errorMatch[1]) : 0;
           }
 
-          // 状态基于错误数判断，没有status则为未执行
-          let stepStatus = 'not_executed'; // 未执行状态
+          let stepStatus = 'not_executed';
           if (status) {
             if (errorCount > 0) stepStatus = 'error';
             else if (status.exit === 2) stepStatus = 'running';
+            else if (status.exit === 1) stepStatus = 'warning';
             else stepStatus = 'success';
           }
 
@@ -67,52 +143,69 @@
             name: stepDef.name,
             type: stepDef.type,
             status: stepStatus,
-            duration: status?.duration || 0, // 累计时间
+            duration: status?.duration || 0,
             speed: status?.speed || 0,
-            startTime: run.startAt,
-            batchId: run.batch,
+            startTime: mergedRun.startAt,
+            batchId: mergedRun.batch,
             runIndex: runIndex,
             stepInfo: status?.nr || '',
             comment: status?.comment || '',
             isError: errorCount > 0,
             isRunning: status?.exit === 2,
             errorCount: errorCount,
-            hasExecutionData: !!status // 是否有执行数据
+            hasExecutionData: !!status
           });
         });
 
-        // 按累计时间排序，duration越大越在后面
         steps.sort((a, b) => (a.duration || 0) - (b.duration || 0));
       }
 
       return {
-        batchId: run.batch,
-        startAt: run.startAt,
-        finish: run.finish,
-        stop: run.stop,
-        errors: run.errors,
-        takeTime: run.takeTime,
-        slowStep: run.slowStep,
-        metrics: run.metrics,
+        batchId: mergedRun.batch,
+        startAt: mergedRun.startAt,
+        finish: mergedRun.finish,
+        stop: mergedRun.stop,
+        errors: mergedRun.errors,
+        takeTime: mergedRun.takeTime,
+        slowStep: mergedRun.slowStep,
+        metrics: mergedRun.metrics,
         steps: steps,
-        events: run.events,
-        overallStatus: getRunOverallStatus(run)
+        events: mergedRun.events,
+        overallStatus: getRunOverallStatus(mergedRun),
+        rawDetail: detail,
+        rawSummary: summary
       };
     });
 
+    const pullInfo = data.pull || summaryMeta.pull || {};
+    const pushInfo = data.push || summaryMeta.push || {};
+    const totalRuns = data.times ?? summaryMeta.times ?? runs.length;
+
     return {
-      runs: runs,
-      totalRuns: data.times || 1,
-      pullTime: data.pull?.takeTime || 0,
-      pushTime: data.push?.takeTime || 0,
-      raw: data
+      runs,
+      totalRuns,
+      pullTime: pullInfo.takeTime || 0,
+      pushTime: pushInfo.takeTime || 0,
+      pullInfo,
+      pushInfo,
+      summaryMeta,
+      raw: {
+        detailRuns,
+        summaryRuns,
+        summaryMeta,
+        steps: stepDefinitions
+      }
     };
   }
 
   // 获取运行整体状态
   function getRunOverallStatus(run) {
-    if (run.errors > 0) return 'error';
-    if (run.finish && !run.stop) return 'success';
+    if ((run.errors || 0) > 0) return 'error';
+    if (run.exit === 1) return 'error';
+    if (run.exit === 0) return 'success';
+    if (run.exit === 2) return 'running';
+    if (run.finish === true && run.stop === false) return 'success';
+    if (run.finish === true && run.stop === true) return 'stopped';
     if (run.stop) return 'stopped';
     return 'running';
   }
@@ -1398,15 +1491,20 @@
     console.log('KTR可视化器初始化');
     monitorDrawerForKTR();
     monitorDrawerState();
+    injectNetworkInterceptor();
 
     // 监听来自content script的消息
     window.addEventListener('message', function(event) {
+      if (event.source !== window || !event.data) {
+        return;
+      }
+
       if (event.data.type === 'KTR_DATA' && event.data.data) {
         console.log('收到KTR数据消息:', event.data.data);
-        const parsedData = parseKTRData(event.data.data);
-        if (parsedData) {
-          showVisualization(parsedData);
-        }
+        processIncomingKTRData(event.data.data, '手动消息');
+      } else if (event.data.type === 'KTR_CAPTURED_DATA' && event.data.payload?.body) {
+        console.log('捕获到KTR网络数据:', event.data.payload.url);
+        processIncomingKTRData(event.data.payload.body, event.data.payload.transport);
       }
     });
   }
