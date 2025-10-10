@@ -386,16 +386,7 @@
 
       const validSteps = run.steps.filter(step => step && typeof step === 'object');
 
-      // 性能优化：大量数据时虚拟化处理
-      if (validSteps.length > 50) {
-        timelineHtml += `
-          <div class="performance-warning">
-            ⚠️ 检测到大量步骤数据 (${validSteps.length} 个)，显示前50个步骤以优化性能
-          </div>
-        `;
-      }
-
-      const displaySteps = validSteps.length > 50 ? validSteps.slice(0, 50) : validSteps;
+      const displaySteps = validSteps;
 
       // 计算真实耗时：当前步骤累计时间 - 前一步骤累计时间
       const stepsWithRealDuration = displaySteps.map((step, index) => {
