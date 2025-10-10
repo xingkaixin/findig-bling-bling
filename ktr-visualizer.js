@@ -13,24 +13,15 @@
 
       // 检查是否为直接KTR数据结构（包含steps和rs）
       if (data.steps && data.rs) {
-        return {
-          extData: data,
-          extSummary: data, // 对于直接格式，使用相同的数据
-          raw: data
-        };
+        return normalizeKTRData(data);
       }
 
       // 检查是否为API响应格式（包含result数组）
       if (data.result && data.result[0]) {
         const result = data.result[0];
         const extData = typeof result.ext_data === 'string' ? JSON.parse(result.ext_data) : result.ext_data;
-        const extSummary = typeof result.ext_summary === 'string' ? JSON.parse(result.ext_summary) : result.ext_summary;
 
-        return {
-          extData: extData,
-          extSummary: extSummary,
-          raw: data
-        };
+        return normalizeKTRData({steps: extData.steps, rs: extData.rs, ...extData});
       }
 
       console.log('KTR数据格式不正确，无法识别格式');
@@ -39,6 +30,99 @@
       console.log('KTR数据解析失败:', error);
       return null;
     }
+  }
+
+  // 统一数据结构，消除steps和statuses的分离
+  function normalizeKTRData(data) {
+    const runs = data.rs.map((run, runIndex) => {
+      const steps = [];
+
+      // 过滤虚拟步骤并合并执行状态
+      if (data.steps && data.steps.length > 0) {
+        const virtualSteps = ['eventFlow', 'Dummy']; // 虚拟步骤列表
+        const realSteps = data.steps.filter(step =>
+          !virtualSteps.some(virtual => step.name.includes(virtual))
+        );
+
+        realSteps.forEach((stepDef, stepIndex) => {
+          const status = run.statuses?.find(s => s.step && s.step.includes(stepDef.name));
+
+          // 解析错误数量：从 nr 字符串中提取 E=数字
+          let errorCount = 0;
+          if (status?.nr) {
+            const errorMatch = status.nr.match(/E=(\d+)/);
+            errorCount = errorMatch ? parseInt(errorMatch[1]) : 0;
+          }
+
+          // 状态基于错误数判断，没有status则为未执行
+          let stepStatus = 'not_executed'; // 未执行状态
+          if (status) {
+            if (errorCount > 0) stepStatus = 'error';
+            else if (status.exit === 2) stepStatus = 'running';
+            else stepStatus = 'success';
+          }
+
+          steps.push({
+            id: stepIndex,
+            name: stepDef.name,
+            type: stepDef.type,
+            status: stepStatus,
+            duration: status?.duration || 0, // 累计时间
+            speed: status?.speed || 0,
+            startTime: run.startAt,
+            batchId: run.batch,
+            runIndex: runIndex,
+            stepInfo: status?.nr || '',
+            comment: status?.comment || '',
+            isError: errorCount > 0,
+            isRunning: status?.exit === 2,
+            errorCount: errorCount,
+            hasExecutionData: !!status // 是否有执行数据
+          });
+        });
+
+        // 按累计时间排序，duration越大越在后面
+        steps.sort((a, b) => (a.duration || 0) - (b.duration || 0));
+      }
+
+      return {
+        batchId: run.batch,
+        startAt: run.startAt,
+        finish: run.finish,
+        stop: run.stop,
+        errors: run.errors,
+        takeTime: run.takeTime,
+        slowStep: run.slowStep,
+        metrics: run.metrics,
+        steps: steps,
+        events: run.events,
+        overallStatus: getRunOverallStatus(run)
+      };
+    });
+
+    return {
+      runs: runs,
+      totalRuns: data.times || 1,
+      pullTime: data.pull?.takeTime || 0,
+      pushTime: data.push?.takeTime || 0,
+      raw: data
+    };
+  }
+
+  // 获取运行整体状态
+  function getRunOverallStatus(run) {
+    if (run.errors > 0) return 'error';
+    if (run.finish && !run.stop) return 'success';
+    if (run.stop) return 'stopped';
+    return 'running';
+  }
+
+  // 转换exit码为状态
+  function getStatusFromExit(exit) {
+    if (exit === 0) return 'success';
+    if (exit === 1) return 'warning';
+    if (exit === 2) return 'running';
+    return 'error';
   }
 
   // 创建可视化面板
@@ -61,13 +145,12 @@
     // 设置面板内容
     panel.innerHTML = `
       <div class="ktr-viz-header">
-        <h3>数据处理链路</h3>
+        <h3>KTR作业运行监控</h3>
         <button class="ktr-viz-close" onclick="this.closest('#ktr-visualization-panel').remove()">×</button>
       </div>
       <div class="ktr-viz-content">
-        ${generateProcessingFlow(ktrData)}
-        ${generateStatusOverview(ktrData)}
-        ${generateStepDetails(ktrData)}
+        ${generateRunTabs(ktrData)}
+        <div id="ktr-run-content"></div>
       </div>
     `;
 
@@ -77,170 +160,379 @@
     return panel;
   }
 
-  // 生成处理流程图
-  function generateProcessingFlow(ktrData) {
-    const steps = ktrData.extData.steps || [];
-    const rsData = ktrData.extData.rs || [];
-
-    if (steps.length === 0) {
-      return '<div class="ktr-viz-no-data">暂无步骤数据</div>';
+  // 生成运行标签页
+  function generateRunTabs(ktrData) {
+    if (!ktrData.runs || ktrData.runs.length === 0) {
+      return '<div class="ktr-viz-no-data">暂无运行数据</div>';
     }
 
-    let flowHtml = '<div class="ktr-viz-flow">';
+    let tabsHtml = '<div class="ktr-viz-tabs">';
 
-    steps.forEach((step, index) => {
-      const statusInfo = getStepStatus(step.name, rsData);
-      const isLast = index === steps.length - 1;
+    ktrData.runs.forEach((run, index) => {
+      const isActive = index === 0 ? 'active' : '';
+      const statusClass = run.overallStatus;
+      const batchLabel = run.batchId ? `批次: ${run.batchId}` : `运行 ${index + 1}`;
 
-      flowHtml += `
-        <div class="ktr-viz-step ${statusInfo.status}" data-step="${step.name}">
-          <div class="ktr-viz-step-icon">${getStepIcon(step.type)}</div>
-          <div class="ktr-viz-step-info">
-            <div class="ktr-viz-step-name">${step.name}</div>
-            <div class="ktr-viz-step-type">${step.type}</div>
-            ${statusInfo.duration ? `<div class="ktr-viz-step-duration">${statusInfo.duration}ms</div>` : ''}
-          </div>
-          ${statusInfo.comment ? `<div class="ktr-viz-step-comment">${statusInfo.comment}</div>` : ''}
-        </div>
-        ${!isLast ? '<div class="ktr-viz-arrow">→</div>' : ''}
+      tabsHtml += `
+        <button class="ktr-viz-tab ${isActive} ${statusClass}"
+                onclick="switchRun(${index})"
+                data-run-index="${index}">
+          <span class="tab-batch">${batchLabel}</span>
+          <span class="tab-status ${statusClass}">${getStatusText(run.overallStatus)}</span>
+          ${run.errors > 0 ? `<span class="tab-errors">${run.errors}错误</span>` : ''}
+        </button>
       `;
     });
 
-    flowHtml += '</div>';
-    return flowHtml;
+    tabsHtml += '</div>';
+    return tabsHtml;
   }
 
-  // 获取步骤状态
-  function getStepStatus(stepName, rsData) {
-    for (const rs of rsData) {
-      if (rs.statuses) {
-        for (const status of rs.statuses) {
-          if (status.step && status.step.includes(stepName)) {
-            return {
-              status: getStatusClass(status.exit),
-              duration: status.duration,
-              comment: status.comment
-            };
-          }
-        }
-      }
+  // 切换运行显示（性能优化版本）
+  window.switchRun = function(runIndex) {
+    // 性能优化：防抖处理
+    if (window.switchRunTimeout) {
+      clearTimeout(window.switchRunTimeout);
     }
-    return { status: 'pending', duration: null, comment: null };
+
+    window.switchRunTimeout = setTimeout(() => {
+      try {
+        // 更新标签状态
+        document.querySelectorAll('.ktr-viz-tab').forEach(tab => {
+          tab.classList.remove('active');
+        });
+        const activeTab = document.querySelector(`[data-run-index="${runIndex}"]`);
+        if (activeTab) {
+          activeTab.classList.add('active');
+        }
+
+        // 更新内容区域
+        const contentDiv = document.getElementById('ktr-run-content');
+        if (!contentDiv) {
+          console.error('找不到内容容器');
+          return;
+        }
+
+        const run = window.currentKTRData?.runs?.[runIndex];
+        if (!run) {
+          contentDiv.innerHTML = generateErrorView('数据错误', `找不到运行记录 ${runIndex + 1}`);
+          return;
+        }
+
+        // 性能优化：显示加载状态
+        contentDiv.innerHTML = '<div class="loading-state">正在加载数据...</div>';
+
+        // 使用requestAnimationFrame优化渲染性能
+        requestAnimationFrame(() => {
+          try {
+            contentDiv.innerHTML = generateTimelineView(run);
+          } catch (error) {
+            console.error('渲染时间线时出错:', error);
+            contentDiv.innerHTML = generateErrorView('渲染错误', '渲染时间线时发生错误');
+          }
+        });
+      } catch (error) {
+        console.error('切换运行时出错:', error);
+      }
+    }, 50); // 50ms防抖
+  };
+
+  // 生成时间线视图
+  function generateTimelineView(run) {
+    if (!run.steps || run.steps.length === 0) {
+      return generateErrorView('暂无步骤数据', '该运行记录中没有找到步骤执行信息');
+    }
+
+    try {
+      let timelineHtml = `
+        <div class="ktr-viz-timeline">
+          <div class="timeline-header">
+            <h4>执行时间线</h4>
+            <div class="timeline-summary">
+              <span class="summary-item">开始: ${escapeHtml(run.startAt || 'N/A')}</span>
+              <span class="summary-item">总耗时: ${run.takeTime || 0}ms</span>
+              <span class="summary-item ${run.overallStatus}">状态: ${getStatusText(run.overallStatus)}</span>
+            </div>
+          </div>
+          <div class="timeline-content">
+      `;
+
+      const validSteps = run.steps.filter(step => step && typeof step === 'object');
+
+      // 性能优化：大量数据时虚拟化处理
+      if (validSteps.length > 50) {
+        timelineHtml += `
+          <div class="performance-warning">
+            ⚠️ 检测到大量步骤数据 (${validSteps.length} 个)，显示前50个步骤以优化性能
+          </div>
+        `;
+      }
+
+      const displaySteps = validSteps.length > 50 ? validSteps.slice(0, 50) : validSteps;
+
+      // 计算真实耗时：当前步骤累计时间 - 前一步骤累计时间
+      const stepsWithRealDuration = displaySteps.map((step, index) => {
+        const currentCumulative = step.duration || 0;
+        const prevCumulative = index > 0 ? (displaySteps[index - 1].duration || 0) : 0;
+        const realDuration = currentCumulative - prevCumulative;
+
+        return {
+          ...step,
+          realDuration: Math.max(0, realDuration), // 确保不为负数
+          cumulativeTime: currentCumulative
+        };
+      });
+
+      const maxDuration = Math.max(...stepsWithRealDuration.map(s => s.realDuration), 1);
+
+      // 性能优化：使用DocumentFragment减少DOM操作
+      const fragment = document.createElement('template');
+      let stepsHtml = '';
+
+      stepsWithRealDuration.forEach((step, index) => {
+        try {
+          const isLast = index === stepsWithRealDuration.length - 1;
+          const realDuration = step.realDuration;
+          const widthPercent = maxDuration > 0 ? (realDuration / maxDuration * 100) : 0;
+
+          const stepName = escapeHtml(step.name || `步骤 ${index + 1}`);
+          const stepSpeed = step.speed || 0;
+          const stepInfo = escapeHtml(step.stepInfo || '');
+          const stepComment = escapeHtml(step.comment || '');
+
+          stepsHtml += `
+            <div class="timeline-item">
+              <div class="timeline-marker ${step.status}">
+                <div class="marker-number">${index + 1}</div>
+                <div class="marker-status">${getStatusText(step.status)}</div>
+              </div>
+              <div class="timeline-content-block ${step.isError ? 'error-highlight' : ''}">
+                <div class="step-header">
+                  <span class="step-name">${stepName}</span>
+                  <span class="step-duration">${realDuration}ms</span>
+                  <span class="step-speed">${stepSpeed}/s</span>
+                </div>
+                <div class="step-progress">
+                  <div class="progress-bar ${step.status}" style="width: ${widthPercent}%"></div>
+                  <span class="progress-text">累计: ${step.cumulativeTime}ms</span>
+                </div>
+                ${stepInfo ? `<div class="step-info">${stepInfo}</div>` : ''}
+                ${stepComment ? `<div class="step-comment">${stepComment}</div>` : ''}
+                ${step.errorCount > 0 ? `<div class="step-error">⚠️ 错误数: ${step.errorCount}</div>` : ''}
+              </div>
+              ${!isLast ? '<div class="timeline-connector"></div>' : ''}
+            </div>
+          `;
+        } catch (stepError) {
+          console.warn(`渲染步骤 ${index} 时出错:`, stepError);
+          stepsHtml += `
+            <div class="timeline-item">
+              <div class="timeline-marker error">
+                <div class="marker-number">${index + 1}</div>
+                <div class="marker-status">错误</div>
+              </div>
+              <div class="timeline-content-block error-highlight">
+                <div class="step-header">
+                  <span class="step-name">步骤渲染错误</span>
+                </div>
+                <div class="step-error">无法显示此步骤的信息</div>
+              </div>
+            </div>
+          `;
+        }
+      });
+
+      timelineHtml += stepsHtml;
+
+      timelineHtml += `
+          </div>
+        </div>
+        ${generateBatchInfo(run)}
+        ${generateStepMetrics(run)}
+      `;
+
+      return timelineHtml;
+    } catch (error) {
+      console.error('生成时间线视图时出错:', error);
+      return generateErrorView('渲染错误', '生成时间线视图时发生错误，请检查数据格式');
+    }
   }
 
-  // 获取状态样式类
-  function getStatusClass(exitCode) {
-    if (exitCode === 0) return 'success';
-    if (exitCode === 1) return 'warning';
-    if (exitCode === 2) return 'running';
-    return 'error';
+  // 生成错误视图
+  function generateErrorView(title, message) {
+    return `
+      <div class="ktr-viz-error">
+        <div class="error-icon">⚠️</div>
+        <div class="error-title">${escapeHtml(title)}</div>
+        <div class="error-message">${escapeHtml(message)}</div>
+        <div class="error-actions">
+          <button onclick="console.log('尝试重新解析数据')" class="error-btn">重试</button>
+          <button onclick="console.log('显示原始数据')" class="error-btn">查看原始数据</button>
+        </div>
+      </div>
+    `;
   }
 
-  // 获取步骤图标
-  function getStepIcon(type) {
-    const icons = {
-      'TableInput': '📥',
-      'TableOutput': '📤',
-      'InsertUpdate': '💾',
-      'RedoTableInput': '🔄',
-      'default': '⚙️'
-    };
-    return icons[type] || icons.default;
+  // HTML转义函数
+  function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
   }
 
-  // 生成状态概览
-  function generateStatusOverview(ktrData) {
-    const summary = ktrData.extSummary;
-    const rsData = summary.rs || [];
-
-    if (rsData.length === 0) {
+  // 生成批次信息
+  function generateBatchInfo(run) {
+    if (!run.events) {
       return '';
     }
 
-    const batchInfo = rsData[0];
-    const overallStatus = getOverallStatus(batchInfo);
+    const events = run.events;
+    const metrics = run.metrics || '';
 
     return `
-      <div class="ktr-viz-overview">
-        <h4>运行概览</h4>
-        <div class="ktr-viz-batch-info">
-          <div class="ktr-viz-batch-item">
-            <span class="label">批次:</span>
-            <span class="value">${batchInfo.batch || 'N/A'}</span>
+      <div class="ktr-viz-batch-info">
+        <h4>批次信息</h4>
+        <div class="batch-grid">
+          <div class="batch-section">
+            <h5>数据源</h5>
+            <div class="batch-item">
+              <span class="batch-label">Topic:</span>
+              <span class="batch-value">${escapeHtml(events.topic || 'N/A')}</span>
+            </div>
+            <div class="batch-item">
+              <span class="batch-label">指标:</span>
+              <span class="batch-value metrics-text">${escapeHtml(metrics)}</span>
+            </div>
           </div>
-          <div class="ktr-viz-batch-item">
-            <span class="label">开始时间:</span>
-            <span class="value">${batchInfo.startAt || 'N/A'}</span>
+
+          <div class="batch-section">
+            <h5>数据获取</h5>
+            <div class="batch-item">
+              <span class="batch-label">获取时间:</span>
+              <span class="batch-value">${events.pull?.reqTime || 'N/A'}</span>
+            </div>
+            <div class="batch-item">
+              <span class="batch-label">获取耗时:</span>
+              <span class="batch-value">${events.pull?.takeTime || 0}ms</span>
+            </div>
+            <div class="batch-item">
+              <span class="batch-label">数据条数:</span>
+              <span class="batch-value">${events.fetch?.count || 0}</span>
+            </div>
+            <div class="batch-item">
+              <span class="batch-label">主键范围:</span>
+              <span class="batch-value">${escapeHtml(events.fetch?.range || 'N/A')}</span>
+            </div>
+            <div class="batch-item">
+              <span class="batch-label">更新时间:</span>
+              <span class="batch-value">${escapeHtml(events.fetch?.opTime || 'N/A')}</span>
+            </div>
           </div>
-          <div class="ktr-viz-batch-item">
-            <span class="label">状态:</span>
-            <span class="value ${overallStatus}">${overallStatus.toUpperCase()}</span>
+
+          <div class="batch-section">
+            <h5>数据处理</h5>
+            <div class="batch-item">
+              <span class="batch-label">推送时间:</span>
+              <span class="batch-value">${events.push?.reqTime || 'N/A'}</span>
+            </div>
+            <div class="batch-item">
+              <span class="batch-label">推送耗时:</span>
+              <span class="batch-value">${events.push?.takeTime || 0}ms</span>
+            </div>
           </div>
-          <div class="ktr-viz-batch-item">
-            <span class="label">错误数:</span>
-            <span class="value">${batchInfo.errors || 0}</span>
+
+          <div class="batch-section">
+            <h5>变更统计</h5>
+            <div class="batch-item">
+              <span class="batch-label">总记录数:</span>
+              <span class="batch-value">${events.counter?.size || 0}</span>
+            </div>
+            <div class="batch-item">
+              <span class="batch-label">去重记录:</span>
+              <span class="batch-value">${events.counter?.key || 0}</span>
+            </div>
+            <div class="batch-item">
+              <span class="batch-label">操作统计:</span>
+              <span class="batch-value">${escapeHtml(events.counter?.op || 'N/A')}</span>
+            </div>
+            <div class="batch-item">
+              <span class="batch-label">转换统计:</span>
+              <span class="batch-value">${escapeHtml(events.trans?.nr || 'N/A')}</span>
+            </div>
           </div>
         </div>
       </div>
     `;
   }
 
-  // 获取整体状态
-  function getOverallStatus(batchInfo) {
-    if (batchInfo.errors > 0) return 'error';
-    if (batchInfo.finish && !batchInfo.stop) return 'success';
-    if (batchInfo.stop) return 'stopped';
-    return 'running';
-  }
+  // 生成步骤指标
+  function generateStepMetrics(run) {
+    try {
+      const validSteps = run.steps?.filter(step => step && typeof step === 'object') || [];
+      const totalSteps = validSteps.length;
 
-  // 生成步骤详情
-  function generateStepDetails(ktrData) {
-    const steps = ktrData.extData.steps || [];
-    const rsData = ktrData.extData.rs || [];
+      if (totalSteps === 0) {
+        return generateErrorView('无指标数据', '无法生成运行指标，请检查步骤数据');
+      }
 
-    if (steps.length === 0) {
-      return '';
-    }
+      const successSteps = validSteps.filter(s => s.status === 'success').length;
+      const errorSteps = validSteps.filter(s => s.status === 'error').length;
+      const runningSteps = validSteps.filter(s => s.status === 'running').length;
 
-    let detailsHtml = '<div class="ktr-viz-details">';
-    detailsHtml += '<h4>步骤详情</h4>';
+      // 计算真实耗时来找最慢步骤
+      const stepsWithRealDuration = validSteps.map((step, index) => {
+        const currentCumulative = step.duration || 0;
+        const prevCumulative = index > 0 ? (validSteps[index - 1].duration || 0) : 0;
+        const realDuration = currentCumulative - prevCumulative;
 
-    steps.forEach((step, index) => {
-      const statusInfo = getStepStatus(step.name, rsData);
+        return {
+          ...step,
+          realDuration: Math.max(0, realDuration)
+        };
+      });
 
-      detailsHtml += `
-        <div class="ktr-viz-detail-item">
-          <div class="ktr-viz-detail-header">
-            <span class="step-number">${index + 1}</span>
-            <span class="step-name">${step.name}</span>
-            <span class="step-status ${statusInfo.status}">${getStatusText(statusInfo.status)}</span>
-          </div>
-          <div class="ktr-viz-detail-body">
-            <div class="detail-row">
-              <span class="detail-label">类型:</span>
-              <span class="detail-value">${step.type}</span>
+      const slowestStep = stepsWithRealDuration.reduce((prev, current) =>
+        (current.realDuration || 0) > (prev.realDuration || 0) ? current : prev
+      );
+
+      return `
+        <div class="ktr-viz-metrics">
+          <h4>运行指标</h4>
+          <div class="metrics-grid">
+            <div class="metric-item">
+              <span class="metric-label">总步骤</span>
+              <span class="metric-value">${totalSteps}</span>
             </div>
-            ${statusInfo.duration ? `
-              <div class="detail-row">
-                <span class="detail-label">耗时:</span>
-                <span class="detail-value">${statusInfo.duration}ms</span>
-              </div>
-            ` : ''}
-            ${statusInfo.comment ? `
-              <div class="detail-row">
-                <span class="detail-label">备注:</span>
-                <span class="detail-value">${statusInfo.comment}</span>
-              </div>
-            ` : ''}
+            <div class="metric-item success">
+              <span class="metric-label">成功</span>
+              <span class="metric-value">${successSteps}</span>
+            </div>
+            <div class="metric-item error">
+              <span class="metric-label">失败</span>
+              <span class="metric-value">${errorSteps}</span>
+            </div>
+            <div class="metric-item running">
+              <span class="metric-label">运行中</span>
+              <span class="metric-value">${runningSteps}</span>
+            </div>
+            <div class="metric-item slow">
+              <span class="metric-label">最慢步骤</span>
+              <span class="metric-value">${escapeHtml(slowestStep?.name || 'N/A')} (${slowestStep?.realDuration || 0}ms)</span>
+            </div>
+            <div class="metric-item">
+              <span class="metric-label">总耗时</span>
+              <span class="metric-value">${run.takeTime || 0}ms</span>
+            </div>
           </div>
         </div>
       `;
-    });
-
-    detailsHtml += '</div>';
-    return detailsHtml;
+    } catch (error) {
+      console.error('生成步骤指标时出错:', error);
+      return generateErrorView('指标错误', '生成运行指标时发生错误');
+    }
   }
 
+  
   // 获取状态文本
   function getStatusText(status) {
     const statusMap = {
@@ -249,7 +541,8 @@
       'warning': '警告',
       'running': '运行中',
       'pending': '待执行',
-      'stopped': '已停止'
+      'stopped': '已停止',
+      'not_executed': '未执行'
     };
     return statusMap[status] || status;
   }
@@ -266,8 +559,8 @@
           position: fixed;
           top: 50px;
           right: 20px;
-          width: 800px;
-          max-height: 85vh;
+          width: 900px;
+          max-height: 90vh;
           background: white;
           border: 1px solid #dcdfe6;
           border-radius: 8px;
@@ -312,224 +605,460 @@
         }
 
         .ktr-viz-content {
-          padding: 20px;
+          padding: 0;
           overflow-y: auto;
-          max-height: calc(85vh - 70px);
+          max-height: calc(90vh - 70px);
         }
 
-        .ktr-viz-flow {
+        /* 标签页样式 */
+        .ktr-viz-tabs {
           display: flex;
-          flex-direction: column;
+          background: #f5f7fa;
+          border-bottom: 1px solid #dcdfe6;
+          padding: 0 16px;
           gap: 8px;
-          margin-bottom: 20px;
+          overflow-x: auto;
         }
 
-        .ktr-viz-step {
+        .ktr-viz-tab {
+          background: transparent;
+          border: none;
+          padding: 12px 16px;
+          cursor: pointer;
+          border-radius: 6px 6px 0 0;
           display: flex;
           align-items: center;
-          padding: 12px;
-          border: 1px solid #ebeef5;
-          border-radius: 6px;
-          background: #fafafa;
+          gap: 8px;
+          font-size: 13px;
+          white-space: nowrap;
+          transition: all 0.3s;
+        }
+
+        .ktr-viz-tab:hover {
+          background: rgba(64, 158, 255, 0.1);
+        }
+
+        .ktr-viz-tab.active {
+          background: white;
+          box-shadow: 0 -2px 4px rgba(0,0,0,0.05);
+        }
+
+        .tab-batch {
+          font-weight: 500;
+          color: #303133;
+        }
+
+        .tab-status {
+          font-size: 11px;
+          padding: 2px 6px;
+          border-radius: 3px;
+          color: white;
+        }
+
+        .tab-status.success { background: #67c23a; }
+        .tab-status.error { background: #f56c6c; }
+        .tab-status.running { background: #409eff; }
+        .tab-status.warning { background: #e6a23c; }
+
+        .tab-errors {
+          font-size: 11px;
+          color: #f56c6c;
+          font-weight: 500;
+        }
+
+        /* 时间线样式 */
+        .ktr-viz-timeline {
+          padding: 20px;
+        }
+
+        .timeline-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 20px;
+          padding-bottom: 12px;
+          border-bottom: 1px solid #ebeef5;
+        }
+
+        .timeline-header h4 {
+          margin: 0;
+          font-size: 15px;
+          color: #303133;
+        }
+
+        .timeline-summary {
+          display: flex;
+          gap: 16px;
+          font-size: 12px;
+        }
+
+        .summary-item {
+          color: #606266;
+        }
+
+        .summary-item.success { color: #67c23a; font-weight: 500; }
+        .summary-item.error { color: #f56c6c; font-weight: 500; }
+        .summary-item.running { color: #409eff; font-weight: 500; }
+
+        .timeline-content {
           position: relative;
         }
 
-        .ktr-viz-step.success {
-          border-color: #67c23a;
-          background: #f0f9ff;
-        }
-
-        .ktr-viz-step.error {
-          border-color: #f56c6c;
-          background: #fef0f0;
-        }
-
-        .ktr-viz-step.running {
-          border-color: #409eff;
-          background: #ecf5ff;
-        }
-
-        .ktr-viz-step.warning {
-          border-color: #e6a23c;
-          background: #fdf6ec;
-        }
-
-        .ktr-viz-step-icon {
-          font-size: 20px;
-          margin-right: 12px;
-        }
-
-        .ktr-viz-step-info {
-          flex: 1;
-        }
-
-        .ktr-viz-step-name {
-          font-weight: 500;
-          color: #303133;
-          margin-bottom: 2px;
-        }
-
-        .ktr-viz-step-type {
-          font-size: 12px;
-          color: #909399;
-        }
-
-        .ktr-viz-step-duration {
-          font-size: 12px;
-          color: #67c23a;
-          margin-top: 2px;
-        }
-
-        .ktr-viz-step-comment {
-          font-size: 12px;
-          color: #e6a23c;
-          margin-top: 2px;
-        }
-
-        .ktr-viz-arrow {
-          text-align: center;
-          color: #c0c4cc;
-          font-size: 16px;
-          margin: 4px 0;
-        }
-
-        .ktr-viz-overview {
+        .timeline-item {
+          display: flex;
           margin-bottom: 20px;
+          position: relative;
         }
 
-        .ktr-viz-overview h4 {
-          margin: 0 0 12px 0;
-          font-size: 14px;
-          color: #303133;
+        .timeline-item:last-child {
+          margin-bottom: 0;
         }
 
-        .ktr-viz-batch-info {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 8px;
+        .timeline-marker {
+          flex-shrink: 0;
+          width: 60px;
+          text-align: center;
+          position: relative;
         }
 
-        .ktr-viz-batch-item {
-          display: flex;
-          justify-content: space-between;
-          padding: 8px;
-          background: #f5f7fa;
-          border-radius: 4px;
-        }
-
-        .ktr-viz-batch-item .label {
-          color: #606266;
-          font-size: 12px;
-        }
-
-        .ktr-viz-batch-item .value {
-          color: #303133;
-          font-size: 12px;
-          font-weight: 500;
-        }
-
-        .ktr-viz-batch-item .value.success {
-          color: #67c23a;
-        }
-
-        .ktr-viz-batch-item .value.error {
-          color: #f56c6c;
-        }
-
-        .ktr-viz-batch-item .value.running {
-          color: #409eff;
-        }
-
-        .ktr-viz-details h4 {
-          margin: 0 0 12px 0;
-          font-size: 14px;
-          color: #303133;
-        }
-
-        .ktr-viz-detail-item {
-          margin-bottom: 12px;
-          border: 1px solid #ebeef5;
-          border-radius: 4px;
-        }
-
-        .ktr-viz-detail-header {
-          display: flex;
-          align-items: center;
-          padding: 10px 12px;
-          background: #f5f7fa;
-          border-radius: 4px 4px 0 0;
-        }
-
-        .step-number {
-          background: #409eff;
-          color: white;
-          width: 20px;
-          height: 20px;
+        .marker-number {
+          width: 28px;
+          height: 28px;
           border-radius: 50%;
           display: flex;
           align-items: center;
           justify-content: center;
+          font-weight: 600;
           font-size: 12px;
-          margin-right: 8px;
+          color: white;
+          margin: 0 auto 4px;
+        }
+
+        .timeline-marker.success .marker-number { background: #67c23a; }
+        .timeline-marker.error .marker-number { background: #f56c6c; }
+        .timeline-marker.running .marker-number { background: #409eff; }
+        .timeline-marker.warning .marker-number { background: #e6a23c; }
+        .timeline-marker.pending .marker-number { background: #909399; }
+        .timeline-marker.not_executed .marker-number { background: #c0c4cc; }
+
+        .marker-status {
+          font-size: 10px;
+          color: #909399;
+        }
+
+        .timeline-content-block {
+          flex: 1;
+          margin-left: 16px;
+          padding: 16px;
+          background: #fafbfc;
+          border-radius: 6px;
+          border: 1px solid #ebeef5;
+          position: relative;
+        }
+
+        .timeline-content-block::before {
+          content: '';
+          position: absolute;
+          left: -8px;
+          top: 16px;
+          width: 0;
+          height: 0;
+          border-top: 6px solid transparent;
+          border-bottom: 6px solid transparent;
+          border-right: 8px solid #ebeef5;
+        }
+
+        .step-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 8px;
         }
 
         .step-name {
-          flex: 1;
           font-weight: 500;
           color: #303133;
+          font-size: 13px;
         }
 
-        .step-status {
+        .step-duration, .step-speed {
           font-size: 12px;
-          padding: 2px 8px;
+          color: #606266;
+          background: white;
+          padding: 2px 6px;
           border-radius: 3px;
         }
 
-        .step-status.success {
-          background: #f0f9ff;
-          color: #67c23a;
+        .step-progress {
+          margin-bottom: 8px;
         }
 
-        .step-status.error {
-          background: #fef0f0;
-          color: #f56c6c;
+        .progress-bar {
+          height: 6px;
+          border-radius: 3px;
+          margin-bottom: 4px;
+          transition: width 0.3s;
         }
 
-        .step-status.running {
-          background: #ecf5ff;
-          color: #409eff;
+        .progress-bar.success { background: #67c23a; }
+        .progress-bar.error { background: #f56c6c; }
+        .progress-bar.running { background: #409eff; }
+        .progress-bar.warning { background: #e6a23c; }
+        .progress-bar.pending { background: #909399; }
+        .progress-bar.not_executed { background: #c0c4cc; }
+
+        .progress-text {
+          font-size: 11px;
+          color: #909399;
         }
 
-        .ktr-viz-detail-body {
-          padding: 12px;
-        }
-
-        .detail-row {
-          display: flex;
-          margin-bottom: 6px;
-        }
-
-        .detail-row:last-child {
-          margin-bottom: 0;
-        }
-
-        .detail-label {
+        .step-info, .step-comment {
+          font-size: 11px;
           color: #606266;
-          font-size: 12px;
-          width: 60px;
-          flex-shrink: 0;
+          margin-top: 4px;
+          font-family: 'SF Mono', Monaco, Consolas, monospace;
         }
 
-        .detail-value {
+        .step-comment {
+          color: #e6a23c;
+        }
+
+        .timeline-connector {
+          position: absolute;
+          left: 30px;
+          top: 60px;
+          width: 2px;
+          height: 20px;
+          background: #dcdfe6;
+        }
+
+        /* 指标样式 */
+        .ktr-viz-metrics {
+          padding: 20px;
+          border-top: 1px solid #ebeef5;
+          background: #f8f9fa;
+        }
+
+        .ktr-viz-metrics h4 {
+          margin: 0 0 16px 0;
+          font-size: 15px;
           color: #303133;
-          font-size: 12px;
-          flex: 1;
+        }
+
+        .metrics-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+          gap: 12px;
+        }
+
+        .metric-item {
+          display: flex;
+          flex-direction: column;
+          padding: 12px;
+          background: white;
+          border-radius: 4px;
+          border: 1px solid #ebeef5;
+        }
+
+        .metric-item.success { border-left: 3px solid #67c23a; }
+        .metric-item.error { border-left: 3px solid #f56c6c; }
+        .metric-item.running { border-left: 3px solid #409eff; }
+        .metric-item.slow { border-left: 3px solid #e6a23c; }
+
+        .metric-label {
+          font-size: 11px;
+          color: #909399;
+          margin-bottom: 4px;
+        }
+
+        .metric-value {
+          font-size: 13px;
+          font-weight: 500;
+          color: #303133;
         }
 
         .ktr-viz-no-data {
           text-align: center;
           color: #909399;
+          padding: 40px 20px;
+          font-size: 14px;
+        }
+
+        /* 错误样式 */
+        .ktr-viz-error {
+          text-align: center;
+          padding: 40px 20px;
+          background: #fef0f0;
+          border-radius: 6px;
+          border: 1px solid #f56c6c;
+        }
+
+        .error-icon {
+          font-size: 32px;
+          margin-bottom: 12px;
+        }
+
+        .error-title {
+          font-size: 16px;
+          font-weight: 500;
+          color: #f56c6c;
+          margin-bottom: 8px;
+        }
+
+        .error-message {
+          font-size: 14px;
+          color: #606266;
+          margin-bottom: 20px;
+          line-height: 1.5;
+        }
+
+        .error-actions {
+          display: flex;
+          gap: 12px;
+          justify-content: center;
+        }
+
+        .error-btn {
+          padding: 8px 16px;
+          background: white;
+          border: 1px solid #dcdfe6;
+          border-radius: 4px;
+          color: #606266;
+          font-size: 13px;
+          cursor: pointer;
+          transition: all 0.3s;
+        }
+
+        .error-btn:hover {
+          border-color: #409eff;
+          color: #409eff;
+        }
+
+        .timeline-content-block.error-highlight {
+          border-left: 3px solid #f56c6c;
+          background: #fef0f0;
+        }
+
+        .step-error {
+          font-size: 11px;
+          color: #f56c6c;
+          margin-top: 4px;
+          font-weight: 500;
+        }
+
+        /* 性能优化样式 */
+        .performance-warning {
+          background: #fdf6ec;
+          border: 1px solid #e6a23c;
+          border-radius: 4px;
+          padding: 12px;
+          margin-bottom: 16px;
+          font-size: 13px;
+          color: #e6a23c;
+          text-align: center;
+        }
+
+        .loading-state {
+          text-align: center;
+          padding: 40px 20px;
+          color: #909399;
+          font-size: 14px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+        }
+
+        .loading-state::before {
+          content: '';
+          width: 16px;
+          height: 16px;
+          border: 2px solid #dcdfe6;
+          border-top-color: #409eff;
+          border-radius: 50%;
+          animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
+
+        /* 批次信息样式 */
+        .ktr-viz-batch-info {
           padding: 20px;
+          border-top: 1px solid #ebeef5;
+          background: #fafcff;
+        }
+
+        .ktr-viz-batch-info h4 {
+          margin: 0 0 16px 0;
+          font-size: 15px;
+          color: #303133;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+
+        .ktr-viz-batch-info h4::before {
+          content: '📊';
+          font-size: 16px;
+        }
+
+        .batch-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+          gap: 16px;
+        }
+
+        .batch-section {
+          background: white;
+          border-radius: 6px;
+          padding: 16px;
+          border: 1px solid #ebeef5;
+        }
+
+        .batch-section h5 {
+          margin: 0 0 12px 0;
+          font-size: 13px;
+          color: #606266;
+          font-weight: 500;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+        }
+
+        .batch-item {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 6px 0;
+          border-bottom: 1px solid #f5f7fa;
+        }
+
+        .batch-item:last-child {
+          border-bottom: none;
+        }
+
+        .batch-label {
+          font-size: 12px;
+          color: #909399;
+          flex-shrink: 0;
+          margin-right: 8px;
+        }
+
+        .batch-value {
+          font-size: 12px;
+          color: #303133;
+          font-weight: 500;
+          text-align: right;
+          word-break: break-all;
+        }
+
+        .metrics-text {
+          font-family: 'SF Mono', Monaco, Consolas, monospace;
+          font-size: 11px;
+          background: #f5f7fa;
+          padding: 2px 6px;
+          border-radius: 3px;
         }
       </style>
     `;
@@ -544,6 +1073,21 @@
     const panel = createVisualizationPanel(ktrData);
     if (panel) {
       document.body.appendChild(panel);
+      // 保存数据到全局变量供标签页切换使用
+      window.currentKTRData = ktrData;
+      // 自动显示第一个运行结果
+      window.switchRun(0);
+
+      // 重新定位渲染按钮，避免遮挡面板
+      setTimeout(() => {
+        const renderBtn = document.getElementById('ktr-render-btn');
+        if (renderBtn) {
+          const panelRect = panel.getBoundingClientRect();
+          renderBtn.style.top = (panelRect.top + 80) + 'px';
+          renderBtn.style.left = (panelRect.left - 180) + 'px';
+        }
+      }, 100);
+
       console.log('KTR可视化面板已显示');
     }
   }
@@ -743,11 +1287,16 @@
   // 定位按钮到抽屉附近
   function positionButtonNearDrawer(drawer, button) {
     const drawerRect = drawer.getBoundingClientRect();
+    const vizPanel = document.getElementById('ktr-visualization-panel');
 
-    // 如果抽屉位置是(0,0)但有尺寸，说明使用了transform
-    // 将按钮放在页面右侧，靠近抽屉可能出现的位置
-    if (drawerRect.left === 0 && drawerRect.top === 0 && drawerRect.width > 0) {
-      // 假设抽屉从右侧滑入，将按钮放在页面右侧
+    // 如果监控面板已显示，将按钮移到左侧避免遮挡
+    if (vizPanel) {
+      const panelRect = vizPanel.getBoundingClientRect();
+      button.style.top = (panelRect.top + 80) + 'px';
+      button.style.left = (panelRect.left - 180) + 'px';
+    } else if (drawerRect.left === 0 && drawerRect.top === 0 && drawerRect.width > 0) {
+      // 如果抽屉位置是(0,0)但有尺寸，说明使用了transform
+      // 将按钮放在页面右侧，靠近抽屉可能出现的位置
       const viewportWidth = window.innerWidth;
       button.style.top = '100px';
       button.style.left = (viewportWidth - drawerRect.width - 200) + 'px';
