@@ -160,13 +160,21 @@
         steps.sort((a, b) => (a.duration || 0) - (b.duration || 0));
       }
 
+      let effectiveTakeTime = mergedRun.takeTime;
+      if ((effectiveTakeTime === undefined || effectiveTakeTime === null || effectiveTakeTime === 0) && steps.length > 0) {
+        const maxDuration = Math.max(...steps.map(step => step.duration || 0));
+        if (maxDuration > 0) {
+          effectiveTakeTime = maxDuration;
+        }
+      }
+
       return {
         batchId: mergedRun.batch,
         startAt: mergedRun.startAt,
         finish: mergedRun.finish,
         stop: mergedRun.stop,
         errors: mergedRun.errors,
-        takeTime: mergedRun.takeTime,
+        takeTime: effectiveTakeTime,
         slowStep: mergedRun.slowStep,
         metrics: mergedRun.metrics,
         steps: steps,
@@ -211,6 +219,39 @@
   }
 
   
+  let outsideClickHandler = null;
+
+  function detachOutsideClickListener() {
+    if (outsideClickHandler) {
+      document.removeEventListener('mousedown', outsideClickHandler, true);
+      outsideClickHandler = null;
+    }
+  }
+
+  function closeVisualizationPanel() {
+    const panel = document.getElementById('ktr-visualization-panel');
+    if (panel) {
+      panel.remove();
+    }
+    window.currentKTRData = null;
+    detachOutsideClickListener();
+  }
+
+  function attachOutsideClickListener() {
+    detachOutsideClickListener();
+    outsideClickHandler = function(event) {
+      const panel = document.getElementById('ktr-visualization-panel');
+      if (!panel) {
+        detachOutsideClickListener();
+        return;
+      }
+      if (!panel.contains(event.target)) {
+        closeVisualizationPanel();
+      }
+    };
+    document.addEventListener('mousedown', outsideClickHandler, true);
+  }
+
   // 创建可视化面板
   function createVisualizationPanel(ktrData) {
     if (!ktrData) return;
@@ -232,7 +273,7 @@
     panel.innerHTML = `
       <div class="ktr-viz-header">
         <h3>KTR作业运行监控</h3>
-        <button class="ktr-viz-close" onclick="this.closest('#ktr-visualization-panel').remove()">×</button>
+        <button class="ktr-viz-close" type="button" id="ktr-viz-close-btn">×</button>
       </div>
       <div class="ktr-viz-content">
         ${generateRunTabs(ktrData)}
@@ -1154,24 +1195,19 @@
 
   // 显示可视化面板
   function showVisualization(ktrData) {
+    closeVisualizationPanel();
     const panel = createVisualizationPanel(ktrData);
     if (panel) {
       document.body.appendChild(panel);
+      const closeBtn = panel.querySelector('#ktr-viz-close-btn');
+      if (closeBtn) {
+        closeBtn.addEventListener('click', closeVisualizationPanel);
+      }
       // 保存数据到全局变量供标签页切换使用
       window.currentKTRData = ktrData;
       // 自动显示第一个运行结果
       window.switchRun(0);
-
-      // 重新定位渲染按钮，避免遮挡面板
-      setTimeout(() => {
-        const renderBtn = document.getElementById('ktr-render-btn');
-        if (renderBtn) {
-          const panelRect = panel.getBoundingClientRect();
-          renderBtn.style.top = (panelRect.top + 80) + 'px';
-          renderBtn.style.left = (panelRect.left - 180) + 'px';
-        }
-      }, 100);
-
+      attachOutsideClickListener();
       console.log('KTR可视化面板已显示');
     }
   }
@@ -1314,183 +1350,10 @@
     return null;
   }
 
-  // 手动触发渲染的函数
-  function manualRenderKTR() {
-    const drawer = document.querySelector('.el-drawer');
-    if (!drawer) {
-      console.log('未找到抽屉组件');
-      alert('请先打开侧边栏并点击预览');
-      return;
-    }
-
-    const jsonEditor = drawer.querySelector('.jsoneditor');
-    if (!jsonEditor) {
-      console.log('抽屉中未找到JSON编辑器');
-      alert('请在抽屉中查看JSON内容');
-      return;
-    }
-
-    const jsonData = findRawJSONData(jsonEditor);
-    if (!jsonData) {
-      console.log('无法提取JSON数据');
-      alert('无法提取JSON数据，请确保已点击预览并显示JSON内容');
-      return;
-    }
-
-    console.log('手动提取的KTR数据:', jsonData);
-    const parsedData = parseKTRData(jsonData);
-    if (parsedData) {
-      showVisualization(parsedData);
-    } else {
-      alert('KTR数据解析失败，请检查数据格式');
-    }
-  }
-
-  // 动态管理渲染按钮的显示/隐藏
-  function manageRenderButton() {
-    // 直接查找包含JSON编辑器的可见元素
-    const jsonEditors = document.querySelectorAll('.jsoneditor');
-    let targetDrawer = null;
-
-    // 找到第一个可见的JSON编辑器，然后找到其所在的抽屉
-    for (const editor of jsonEditors) {
-      const rect = editor.getBoundingClientRect();
-      if (rect.width > 0 && rect.height > 0) {
-        // 向上查找抽屉容器
-        targetDrawer = editor.closest('.el-drawer__container, .el-drawer, [role="dialog"]');
-        if (targetDrawer) break;
-      }
-    }
-
-    const existingBtn = document.getElementById('ktr-render-btn');
-
-    // 如果找到目标抽屉，显示按钮
-    if (targetDrawer) {
-      if (!existingBtn) {
-        addRenderButtonToDrawer(targetDrawer);
-      } else {
-        // 确保按钮位置正确
-        positionButtonNearDrawer(targetDrawer, existingBtn);
-      }
-    } else if (existingBtn) {
-      // 没有目标抽屉，移除按钮
-      existingBtn.remove();
-    }
-  }
-
-  // 添加渲染按钮到抽屉附近
-  function addRenderButtonToDrawer(drawer) {
-    const renderBtn = document.createElement('button');
-    renderBtn.id = 'ktr-render-btn';
-    renderBtn.innerHTML = '🚀 渲染数据链路图';
-
-    renderBtn.style.cssText = `
-      position: fixed;
-      z-index: 10000;
-      background: #409eff;
-      color: white;
-      border: none;
-      border-radius: 4px;
-      padding: 10px 16px;
-      font-size: 14px;
-      font-weight: 500;
-      cursor: pointer;
-      box-shadow: 0 2px 12px rgba(0,0,0,0.1);
-      transition: all 0.3s;
-      display: block;
-      visibility: visible;
-    `;
-
-    renderBtn.onmouseover = function() {
-      this.style.background = '#66b1ff';
-      this.style.transform = 'translateY(-2px)';
-    };
-
-    renderBtn.onmouseout = function() {
-      this.style.background = '#409eff';
-      this.style.transform = 'translateY(0)';
-    };
-
-    renderBtn.onclick = manualRenderKTR;
-
-    document.body.appendChild(renderBtn);
-    positionButtonNearDrawer(drawer, renderBtn);
-  }
-
-  // 定位按钮到抽屉附近
-  function positionButtonNearDrawer(drawer, button) {
-    const drawerRect = drawer.getBoundingClientRect();
-    const vizPanel = document.getElementById('ktr-visualization-panel');
-
-    // 如果监控面板已显示，将按钮移到左侧避免遮挡
-    if (vizPanel) {
-      const panelRect = vizPanel.getBoundingClientRect();
-      button.style.top = (panelRect.top + 80) + 'px';
-      button.style.left = (panelRect.left - 180) + 'px';
-    } else if (drawerRect.left === 0 && drawerRect.top === 0 && drawerRect.width > 0) {
-      // 如果抽屉位置是(0,0)但有尺寸，说明使用了transform
-      // 将按钮放在页面右侧，靠近抽屉可能出现的位置
-      const viewportWidth = window.innerWidth;
-      button.style.top = '100px';
-      button.style.left = (viewportWidth - drawerRect.width - 200) + 'px';
-    } else {
-      // 正常情况：将按钮放在抽屉左上角外侧
-      button.style.top = (drawerRect.top + 20) + 'px';
-      button.style.left = (drawerRect.left - 180) + 'px';
-    }
-
-    button.style.display = 'block';
-    button.style.visibility = 'visible';
-  }
-
-  // 监听抽屉状态变化
-  function monitorDrawerState() {
-    const observer = new MutationObserver(function(mutations) {
-      mutations.forEach(function(mutation) {
-        // 检查类名变化或属性变化
-        if (mutation.type === 'attributes' &&
-            (mutation.attributeName === 'class' || mutation.attributeName === 'style')) {
-          manageRenderButton();
-        }
-
-        // 检查添加/移除的节点
-        mutation.addedNodes.forEach(function(node) {
-          if (node.nodeType === 1 && node.classList) {
-            if (node.classList.contains('el-drawer') ||
-                node.classList.contains('el-drawer__container') ||
-                node.classList.contains('jsoneditor')) {
-              manageRenderButton();
-            }
-          }
-        });
-
-        mutation.removedNodes.forEach(function(node) {
-          if (node.nodeType === 1 && node.classList &&
-              (node.classList.contains('el-drawer') || node.classList.contains('el-drawer__container'))) {
-            manageRenderButton();
-          }
-        });
-      });
-    });
-
-    // 监听body的变化
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ['class', 'style']
-    });
-
-    // 初始检查和定期检查
-    setTimeout(manageRenderButton, 100);
-    setInterval(manageRenderButton, 1000); // 每秒检查一次
-  }
-
   // 初始化
   function init() {
     console.log('KTR可视化器初始化');
     monitorDrawerForKTR();
-    monitorDrawerState();
     injectNetworkInterceptor();
 
     // 监听来自content script的消息
