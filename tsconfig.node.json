@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    "module": "ESNext",
+    "moduleResolution": "Node",
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true
+  },
+  "include": [
+    "vite.config.ts",
+    "vitest.config.ts",
+    "vitest.setup.ts",
+    "src/manifest.config.ts",
+    "tailwind.config.ts"
+  ]
+}

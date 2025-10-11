@@ -1,50 +1,42 @@
 # 融美美 (findig-bling-bling)
 
-Chrome扩展，用于监听findig-web作业日志页面的扩展数据请求。
+Chrome Manifest V3 扩展，捕获 `findig-web` 作业日志的扩展字段并可视化 KTR 数据处理链路。
 
-## 功能
+## 技术栈
 
-- 监听扩展列"详情"按钮点击事件
-- 捕获并输出 `/logExtData` 的POST请求和响应数据到浏览器控制台
-- 显示当前行的作业信息
+- **框架**：React 18、TypeScript、Tailwind CSS
+- **构建**：Vite + CRXJS、Bun
+- **测试**：Vitest、Testing Library
 
-## 安装
+## 本地开发
 
-1. 下载扩展文件
-2. 打开Chrome浏览器，进入 `chrome://extensions/`
-3. 开启"开发者模式"
-4. 点击"加载已解压的扩展程序"
-5. 选择扩展文件夹
-
-## 输出格式
-
-```
-融美美 - 点击了扩展列详情按钮
-融美美 - 当前行数据: {作业信息}
-融美美 - 捕获到/logExtData请求: {请求信息}
-融美美 - /logExtData响应数据: {响应数据}
+```bash
+bun install
+bun run dev
 ```
 
-## 文件结构
+开发时在 Chrome 中加载 `dist` 或使用 Vite HMR 预览。
 
-- `manifest.json` - 扩展配置文件
-- `content.js` - 内容脚本，监听页面事件和请求
-- `popup.html` - 扩展弹出界面
-- `README.md` - 说明文档
+## 构建与打包
 
-## 技术实现
+```bash
+./build.sh
+```
 
-- 使用MutationObserver监听表格变化
-- 重写XMLHttpRequest和fetch API捕获请求
-- 零依赖，纯JavaScript实现
+脚本会执行 Lint/TypeCheck/Test 并生成 `dist/` 目录及形如 `findig-bling-bling-v*.zip` 的压缩包。
 
-## 兼容性
+## 项目结构
 
-- Chrome 88+
-- 支持Manifest V3
+```
+src/
+  content/    # 内容脚本，可视化面板与抽屉增强
+  injected/   # 页面注入脚本，拦截网络请求
+  popup/      # 扩展弹窗 React UI
+  shared/     # KTR 解析、chrome.storage 等共享模块
+```
 
-## 注意事项
+## 安装扩展
 
-- 扩展只在指定URL生效
-- 需要保持控制台开启才能看到输出
-- 不会修改页面内容，只监听和输出数据
+1. Chrome 打开 `chrome://extensions/`
+2. 启用「开发者模式」
+3. 选择「加载已解压的扩展程序」，指向 `dist/`
