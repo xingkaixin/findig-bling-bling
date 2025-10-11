@@ -6,8 +6,19 @@ export default defineManifest({
   version: "1.0.1",
   description: "监听findig-web作业日志扩展数据，可视化KTR数据处理链路",
   permissions: ["webRequest", "activeTab", "storage"],
+  icons: {
+    16: "icons/icon16.png",
+    32: "icons/icon32.png",
+    48: "icons/icon48.png",
+    128: "icons/icon128.png",
+  },
   host_permissions: ["http://*/*", "https://*/*"],
   action: {
+    default_icon: {
+      16: "icons/icon16.png",
+      32: "icons/icon32.png",
+      48: "icons/icon48.png",
+    },
     default_popup: "src/popup/index.html",
     default_title: "融美美 - KTR数据监听",
   },
