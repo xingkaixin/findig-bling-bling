@@ -30,6 +30,41 @@ function includesFindig(pathname: string | null): boolean {
   return Boolean(pathname && pathname.includes(findigPathFragment));
 }
 
+function normalizePath(pathname: string | null): string {
+  if (!pathname) {
+    return '';
+  }
+  return pathname.replace(/\/+$/, '') || '/';
+}
+
+function buildSiteEntry(parsed: URL): string {
+  const normalizedPath = normalizePath(parsed.pathname);
+  return normalizedPath && normalizedPath !== '/' ? `${parsed.origin}${normalizedPath}` : parsed.origin;
+}
+
+function matchesSite(site: string, tab: TabInfo): boolean {
+  if (!tab.origin) {
+    return false;
+  }
+
+  const normalizedPath = normalizePath(tab.pathname);
+  const candidates = normalizedPath && normalizedPath !== '/'
+    ? [tab.origin, `${tab.origin}${normalizedPath}`]
+    : [tab.origin];
+
+  if (candidates.includes(site)) {
+    return true;
+  }
+
+  try {
+    const parsed = new URL(site);
+    const normalizedSite = buildSiteEntry(parsed);
+    return candidates.includes(normalizedSite) || candidates.includes(parsed.origin);
+  } catch {
+    return false;
+  }
+}
+
 async function queryActiveTab(): Promise<TabInfo> {
   if (typeof chrome === 'undefined' || !chrome.tabs?.query) {
     return { origin: null, pathname: null };
@@ -113,7 +148,8 @@ export default function App() {
       return;
     }
 
-    if (sites.includes(tabInfo.origin)) {
+    const isEnabled = sites.some((site) => matchesSite(site, tabInfo));
+    if (isEnabled) {
       setStatusKey('enabled');
       return;
     }
@@ -146,7 +182,13 @@ export default function App() {
 
     const currentTab = await queryActiveTab();
     setTabInfo(currentTab);
-    setInputValue(currentTab.origin ?? '');
+    const normalizedPath = normalizePath(currentTab.pathname);
+    const defaultValue = currentTab.origin
+      ? normalizedPath && normalizedPath !== '/'
+        ? `${currentTab.origin}${normalizedPath}`
+        : currentTab.origin
+      : '';
+    setInputValue(defaultValue);
     setInputVisible(true);
   };
 
@@ -160,6 +202,7 @@ export default function App() {
     try {
       const parsed = new URL(trimmed);
       const baseUrl = `${parsed.protocol}//${parsed.host}`;
+      const siteEntry = buildSiteEntry(parsed);
 
       if (!parsed.pathname.includes(findigPathFragment)) {
         setBanner({
@@ -169,13 +212,40 @@ export default function App() {
         return;
       }
 
-      if (sites.includes(baseUrl)) {
+      const existingExactIndex = sites.findIndex((site) => {
+        try {
+          return buildSiteEntry(new URL(site)) === siteEntry;
+        } catch {
+          return site === siteEntry;
+        }
+      });
+
+      if (existingExactIndex !== -1) {
         setBanner({ tone: 'warning', message: '该网站已经添加过了' });
         setInputVisible(false);
         return;
       }
 
-      const nextSites = [...sites, baseUrl];
+      const existingBaseIndex = sites.findIndex((site) => {
+        try {
+          return buildSiteEntry(new URL(site)) === baseUrl;
+        } catch {
+          return site === baseUrl;
+        }
+      });
+
+      if (existingBaseIndex !== -1) {
+        const nextSites = [...sites];
+        nextSites[existingBaseIndex] = siteEntry;
+        setSitesState(nextSites);
+        await setEnabledSites(nextSites);
+        setBanner({ tone: 'success', message: '网站添加成功！请刷新页面以启用插件。' });
+        setInputVisible(false);
+        setInputValue('');
+        return;
+      }
+
+      const nextSites = [...sites, siteEntry];
       setSitesState(nextSites);
       await setEnabledSites(nextSites);
       setBanner({ tone: 'success', message: '网站添加成功！请刷新页面以启用插件。' });

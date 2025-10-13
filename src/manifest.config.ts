@@ -3,7 +3,7 @@ import { defineManifest } from "@crxjs/vite-plugin";
 export default defineManifest({
   manifest_version: 3,
   name: "融美美 (findig-bling-bling)",
-  version: "1.0.1",
+  version: "1.0.2",
   description: "监听findig-web作业日志扩展数据，可视化KTR数据处理链路",
   permissions: ["webRequest", "activeTab", "storage"],
   icons: {
