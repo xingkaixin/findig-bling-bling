@@ -32,7 +32,7 @@ export default defineManifest({
   ],
   web_accessible_resources: [
     {
-      resources: ["src/injected/interceptor.ts"],
+      resources: ["src/injected/interceptor.js"],
       matches: ["<all_urls>"],
     },
   ],

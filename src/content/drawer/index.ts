@@ -32,6 +32,7 @@ function injectStyles() {
     #${CONTAINER_ID} .ktr-step-icon { font-size: 24px; margin-right: 15px; width: 32px; text-align: center; }
     #${CONTAINER_ID} .ktr-step-content { flex: 1; }
     #${CONTAINER_ID} .ktr-step-name { font-size: 14px; font-weight: 600; color: #2d3748; margin-bottom: 4px; }
+    #${CONTAINER_ID} .ktr-step-name .ktr-step-type { margin-left: 6px; font-size: 12px; font-weight: 500; color: #718096; }
     #${CONTAINER_ID} .ktr-step-status { display: inline-block; font-size: 11px; padding: 4px 10px; border-radius: 20px; font-weight: 600; text-transform: uppercase; }
     #${CONTAINER_ID} .ktr-step-status.success { background: #c6f6d5; color: #22543d; }
     #${CONTAINER_ID} .ktr-step-status.error { background: #fed7d7; color: #742a2a; }
@@ -96,7 +97,7 @@ function renderSteps(run: NormalizedRun): string {
         <div class="ktr-flow-step ${step.status}">
           <div class="ktr-step-icon">${getStepIcon(step.type)}</div>
           <div class="ktr-step-content">
-            <div class="ktr-step-name">${step.name}</div>
+            <div class="ktr-step-name">${step.name}${step.type ? ` <span class="ktr-step-type">(${step.type})</span>` : ''}</div>
             <div class="ktr-step-status ${step.status}">${statusToLabel(step.status)}</div>
             ${durationLabel}
             ${comment}

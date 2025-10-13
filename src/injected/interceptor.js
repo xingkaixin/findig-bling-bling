@@ -1,5 +1,5 @@
 (function interceptNetwork() {
-  const globalWindow = window as typeof window & { __ktrNetworkInterceptorInstalled?: boolean };
+  const globalWindow = window;
 
   if (globalWindow.__ktrNetworkInterceptorInstalled) {
     return;
@@ -8,11 +8,11 @@
 
   const TARGET_KEYWORD = 'logExtData';
 
-  function shouldHandle(url: unknown): url is string {
+  function shouldHandle(url) {
     return typeof url === 'string' && url.includes(TARGET_KEYWORD);
   }
 
-  function dispatchKTRData(rawBody: string, url: string, transport: 'fetch' | 'xhr') {
+  function dispatchKTRData(rawBody, url, transport) {
     if (!rawBody) return;
     try {
       window.postMessage(
@@ -58,13 +58,13 @@
     const originalOpen = OriginalXHR.prototype.open;
     const originalSend = OriginalXHR.prototype.send;
 
-    OriginalXHR.prototype.open = function patchedOpen(method: string, url: string, ...rest: unknown[]) {
-      (this as XMLHttpRequest & { __ktrRequestUrl?: string }).__ktrRequestUrl = url;
+    OriginalXHR.prototype.open = function patchedOpen(method, url, ...rest) {
+      this.__ktrRequestUrl = url;
       return originalOpen.call(this, method, url, ...rest);
     };
 
-    OriginalXHR.prototype.send = function patchedSend(body?: Document | XMLHttpRequestBodyInit | null) {
-      const xhr = this as XMLHttpRequest & { __ktrRequestUrl?: string };
+    OriginalXHR.prototype.send = function patchedSend(body) {
+      const xhr = this;
       if (shouldHandle(xhr.__ktrRequestUrl)) {
         xhr.addEventListener('load', function onLoad() {
           try {
@@ -76,7 +76,7 @@
           }
         });
       }
-      return originalSend.call(this, body as Document | XMLHttpRequestBodyInit | null);
+      return originalSend.call(this, body);
     };
   }
 })();

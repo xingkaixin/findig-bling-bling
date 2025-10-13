@@ -44,6 +44,10 @@ function resolveStepStatus(status: RunStatusRecord | undefined, errorCount: numb
   }
 
   if (errorCount > 0) return 'error';
+  if (typeof status.exit !== 'number') {
+    return 'success';
+  }
+
   switch (status.exit) {
     case 0:
       return 'success';
@@ -52,7 +56,7 @@ function resolveStepStatus(status: RunStatusRecord | undefined, errorCount: numb
     case 2:
       return 'running';
     default:
-      return 'error';
+      return status.exit > 0 ? 'error' : 'success';
   }
 }
 
@@ -88,18 +92,38 @@ function mapRun(
 ): NormalizedRun {
   const statuses = ensureArray<RunStatusRecord>(detail.statuses ?? summary.statuses);
 
-  const steps = stepDefinitions
+  const stepsWithMetadata = stepDefinitions
     .filter((step) => !virtualStepFlags.some((flag) => step.name.includes(flag)))
-    .map<NormalizedStep>((step, index) => {
+    .map((step, index) => {
       const matchedStatus = statuses.find((record) => record.step && record.step.includes(step.name));
       const errorCount = parseErrorCount(matchedStatus?.nr);
       const status = resolveStepStatus(matchedStatus, errorCount);
       const duration = matchedStatus?.duration ?? 0;
 
       return {
+        definition: step,
+        matchedStatus,
+        errorCount,
+        status,
+        duration,
+        originalIndex: index
+      };
+    });
+
+  const sortedSteps = stepsWithMetadata
+    .sort((a, b) => {
+      if (a.duration === b.duration) {
+        return a.originalIndex - b.originalIndex;
+      }
+      return a.duration - b.duration;
+    })
+    .map((item, index) => {
+      const { definition, matchedStatus, status, errorCount, duration } = item;
+
+      const baseStep: NormalizedStep = {
         id: index,
-        name: step.name,
-        type: step.type,
+        name: definition.name,
+        type: definition.type,
         status,
         duration,
         realDuration: duration,
@@ -115,9 +139,14 @@ function mapRun(
         hasExecutionData: Boolean(matchedStatus),
         cumulativeTime: duration
       };
+
+      return baseStep;
     });
 
-  const normalizedSteps = enrichStepDurations(steps).sort((a, b) => a.id - b.id);
+  const normalizedSteps = enrichStepDurations(sortedSteps).map((step, index) => ({
+    ...step,
+    id: index
+  }));
 
   const takeTimeCandidate = detail.takeTime ?? summary.takeTime;
   const takeTime = typeof takeTimeCandidate === 'number' && takeTimeCandidate > 0

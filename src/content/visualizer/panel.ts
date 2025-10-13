@@ -56,6 +56,7 @@ function ensureStyles() {
     .timeline-content-block.error-highlight { border-left: 3px solid #f56c6c; background: #fef0f0; }
     .step-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; gap: 8px; }
     .step-name { font-weight: 500; color: #303133; font-size: 13px; }
+    .step-name .step-type { margin-left: 6px; font-weight: 400; font-size: 12px; color: #909399; }
     .step-duration, .step-speed { font-size: 12px; color: #606266; background: #fff; padding: 2px 6px; border-radius: 3px; }
     .step-progress { margin-bottom: 8px; }
     .progress-bar { height: 6px; border-radius: 3px; margin-bottom: 4px; transition: width 0.3s; }
@@ -124,6 +125,11 @@ function formatHtml(text: unknown): string {
   const div = document.createElement('div');
   div.textContent = text == null ? '' : String(text);
   return div.innerHTML;
+}
+
+function formatStepName(step: NormalizedStep): string {
+  const typeLabel = step.type ? `<span class="step-type">(${formatHtml(step.type)})</span>` : '';
+  return `${formatHtml(step.name)}${typeLabel}`;
 }
 
 function renderTabs(panel: HTMLElement, data: NormalizedKtrData, activeIndex: number) {
@@ -215,7 +221,7 @@ function generateTimeline(run: NormalizedRun): string {
           </div>
           <div class="timeline-content-block ${step.isError ? 'error-highlight' : ''}">
             <div class="step-header">
-              <span class="step-name">${formatHtml(step.name)}</span>
+              <span class="step-name">${formatStepName(step)}</span>
               <span class="step-duration">${durationLabel}</span>
               <span class="step-speed">${speed}</span>
             </div>
@@ -317,7 +323,7 @@ function generateMetrics(run: NormalizedRun): string {
         <div class="metric-item success"><span class="metric-label">成功</span><span class="metric-value">${successSteps}</span></div>
         <div class="metric-item error"><span class="metric-label">失败</span><span class="metric-value">${errorSteps}</span></div>
         <div class="metric-item running"><span class="metric-label">运行中</span><span class="metric-value">${runningSteps}</span></div>
-        <div class="metric-item slow"><span class="metric-label">最慢步骤</span><span class="metric-value">${slowest ? `${formatHtml(slowest.name)} (${slowest.realDuration}ms)` : 'N/A'}</span></div>
+        <div class="metric-item slow"><span class="metric-label">最慢步骤</span><span class="metric-value">${slowest ? `${formatStepName(slowest)} (${slowest.realDuration}ms)` : 'N/A'}</span></div>
         <div class="metric-item"><span class="metric-label">总耗时</span><span class="metric-value">${run.takeTime ?? 0}ms</span></div>
       </div>
     </div>

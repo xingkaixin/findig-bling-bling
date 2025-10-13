@@ -49,7 +49,7 @@ function injectNetworkInterceptor() {
   const script = document.createElement('script');
   script.id = INTERCEPTOR_ID;
   script.type = 'text/javascript';
-  script.src = chrome.runtime.getURL('src/injected/interceptor.ts');
+  script.src = chrome.runtime.getURL('src/injected/interceptor.js');
   script.onload = () => {
     script.remove();
   };
