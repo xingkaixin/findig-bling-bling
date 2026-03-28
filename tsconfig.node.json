@@ -10,10 +10,8 @@
     "resolveJsonModule": true
   },
   "include": [
-    "vite.config.ts",
+    "wxt.config.ts",
     "vitest.config.ts",
-    "vitest.setup.ts",
-    "src/manifest.config.ts",
-    "tailwind.config.ts"
+    "vitest.setup.ts"
   ]
 }

@@ -9,11 +9,11 @@ export default [
   js.configs.recommended,
   {
     files: ['**/*.{ts,tsx}'],
-    ignores: ['dist/**'],
+    ignores: ['dist/**', '.wxt/**'],
     languageOptions: {
       parser: tsParser,
       parserOptions: {
-        project: './tsconfig.app.json',
+        project: ['./tsconfig.app.json', './tsconfig.node.json'],
         ecmaVersion: 'latest',
         sourceType: 'module',
         ecmaFeatures: {
@@ -41,6 +41,17 @@ export default [
     settings: {
       react: {
         version: 'detect'
+      }
+    }
+  },
+  {
+    files: ['scripts/**/*.mjs'],
+    languageOptions: {
+      ecmaVersion: 'latest',
+      sourceType: 'module',
+      globals: {
+        ...globals.node,
+        ...globals.browser
       }
     }
   },

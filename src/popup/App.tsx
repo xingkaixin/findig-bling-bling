@@ -113,7 +113,6 @@ function Banner({ state }: { state: BannerState | null }) {
 export default function App() {
   const [sites, setSitesState] = useState<string[]>([]);
   const [tabInfo, setTabInfo] = useState<TabInfo>({ origin: null, pathname: null });
-  const [statusKey, setStatusKey] = useState<'enabled' | 'notEnabled' | 'outOfScope' | 'unknown'>('unknown');
   const [isInputVisible, setInputVisible] = useState(false);
   const [inputValue, setInputValue] = useState('');
   const [banner, setBanner] = useState<BannerState | null>(null);
@@ -142,24 +141,21 @@ export default function App() {
     };
   }, []);
 
-  useEffect(() => {
+  const statusKey = useMemo<'enabled' | 'notEnabled' | 'outOfScope' | 'unknown'>(() => {
     if (!tabInfo.origin) {
-      setStatusKey('unknown');
-      return;
+      return 'unknown';
     }
 
     const isEnabled = sites.some((site) => matchesSite(site, tabInfo));
     if (isEnabled) {
-      setStatusKey('enabled');
-      return;
+      return 'enabled';
     }
 
     if (includesFindig(tabInfo.pathname)) {
-      setStatusKey('notEnabled');
-      return;
+      return 'notEnabled';
     }
 
-    setStatusKey('outOfScope');
+    return 'outOfScope';
   }, [sites, tabInfo]);
 
   useEffect(() => {

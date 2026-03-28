@@ -1,5 +1,5 @@
 {
-  "extends": "./tsconfig.node.json",
+  "extends": "./.wxt/tsconfig.json",
   "compilerOptions": {
     "target": "ES2020",
     "module": "ESNext",
@@ -14,6 +14,6 @@
       "@injected/*": ["injected/*"]
     }
   },
-  "include": ["src"],
+  "include": ["src", "entrypoints"],
   "exclude": ["dist", "node_modules"]
 }

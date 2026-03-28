@@ -218,9 +218,7 @@ function monitorDrawer() {
   observer.observe(document.body, { childList: true, subtree: true });
 }
 
-function init() {
+export function init() {
   injectStyles();
   monitorDrawer();
 }
-
-init();

@@ -1,5 +1,6 @@
 node_modules
 dist
+.wxt
 .vite
 .turbo
 .DS_Store

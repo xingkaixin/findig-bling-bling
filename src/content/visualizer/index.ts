@@ -49,7 +49,7 @@ function injectNetworkInterceptor() {
   const script = document.createElement('script');
   script.id = INTERCEPTOR_ID;
   script.type = 'text/javascript';
-  script.src = chrome.runtime.getURL('src/injected/interceptor.js');
+  script.src = chrome.runtime.getURL('interceptor.js');
   script.onload = () => {
     script.remove();
   };
@@ -115,7 +115,7 @@ function registerVisibilityCleanup() {
   });
 }
 
-async function init() {
+export async function init() {
   if (window.__ktrVisualizerInitialized) {
     return;
   }
@@ -135,7 +135,3 @@ async function init() {
   monitorMessages();
   registerVisibilityCleanup();
 }
-
-init().catch((error) => {
-  console.error('KTR可视化器初始化失败', error);
-});
